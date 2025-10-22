@@ -3,6 +3,8 @@ import { fetchSeries } from "../api/twelve";
 
 const VIEWBOX_WIDTH = 600;
 const VIEWBOX_HEIGHT = 220;
+const SERIES_INTERVAL = "1day";
+const SERIES_OUTPUT = 30;
 
 function computePaths(data) {
   if (!Array.isArray(data) || data.length === 0) {
@@ -46,17 +48,38 @@ function computePaths(data) {
   return { line, area };
 }
 
+function readSeriesEntry(sym, interval = SERIES_INTERVAL, output = SERIES_OUTPUT) {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(`series:${sym}|${interval}|${output}`);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 export default function StockChart({ symbol }) {
   const [series, setSeries] = useState([]);
   const [loading, setLoading] = useState(false);
+  const normalizedSymbol = useMemo(
+    () => (typeof symbol === "string" ? symbol.toUpperCase().trim() : ""),
+    [symbol]
+  );
 
   useEffect(() => {
     let active = true;
 
     async function loadData() {
-      const normalized =
-        typeof symbol === "string" ? symbol.toUpperCase().trim() : "";
-      if (!normalized) {
+      if (!normalizedSymbol) {
         if (active) {
           setSeries([]);
           setLoading(false);
@@ -64,9 +87,48 @@ export default function StockChart({ symbol }) {
         return;
       }
 
-      setLoading(true);
+      let hadCached = false;
+      const entry = readSeriesEntry(normalizedSymbol, SERIES_INTERVAL, SERIES_OUTPUT);
+
+      if (entry && entry.data && entry.exp && Date.now() < entry.exp) {
+        const hydratedValues = Array.isArray(entry.data.values)
+          ? entry.data.values.filter((point) => {
+              const closeNumber = Number(point?.close);
+              const datetime = point?.datetime ?? "";
+              return datetime && Number.isFinite(closeNumber);
+            })
+          : [];
+        if (hydratedValues.length) {
+          setSeries(hydratedValues);
+          hadCached = true;
+        } else {
+          setSeries([]);
+        }
+      } else {
+        setSeries([]);
+      }
+
+      const shouldFetch =
+        !entry ||
+        !entry.exp ||
+        Date.now() >= entry.exp ||
+        !hadCached;
+
+      if (!shouldFetch) {
+        setLoading(false);
+        return;
+      }
+
+      if (!hadCached) {
+        setLoading(true);
+      }
+
       try {
-        const response = await fetchSeries(normalized, "1day", 30);
+        const response = await fetchSeries(
+          normalizedSymbol,
+          SERIES_INTERVAL,
+          SERIES_OUTPUT
+        );
         if (!active) {
           return;
         }
@@ -81,8 +143,8 @@ export default function StockChart({ symbol }) {
 
         setSeries(values);
       } catch (error) {
-        console.warn(`Failed to load series for ${normalized}`, error);
-        if (active) {
+        console.warn(`Failed to load series for ${normalizedSymbol}`, error);
+        if (active && !hadCached) {
           setSeries([]);
         }
       } finally {
@@ -96,11 +158,9 @@ export default function StockChart({ symbol }) {
     return () => {
       active = false;
     };
-  }, [symbol]);
+  }, [normalizedSymbol]);
 
   const { line, area } = useMemo(() => computePaths(series), [series]);
-  const normalizedSymbol =
-    typeof symbol === "string" ? symbol.toUpperCase().trim() : "";
 
   if (!normalizedSymbol) {
     return (
@@ -138,13 +198,7 @@ export default function StockChart({ symbol }) {
         aria-label={`Price history for ${normalizedSymbol}`}
       >
         <defs>
-          <linearGradient
-            id="chartGradient"
-            x1="0"
-            x2="0"
-            y1="0"
-            y2="1"
-          >
+          <linearGradient id="chartGradient" x1="0" x2="0" y1="0" y2="1">
             <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.4" />
             <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
           </linearGradient>

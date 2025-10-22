@@ -16,6 +16,7 @@ const STORAGE_KEY = "portfolio-holdings";
 const THEME_KEY = "theme";
 const REFRESH_COOLDOWN = 1500;
 const ERROR_WINDOW_MS = 15_000;
+const FRESH_MS = 60 * 1000;
 
 function normalizeSymbol(symbol) {
   return (symbol || "").toUpperCase().trim();
@@ -26,11 +27,55 @@ function safeNumber(value) {
   return Number.isFinite(num) ? num : 0;
 }
 
+function resolveQuoteValues(priceValue, previousValue) {
+  const resolvedPrice = safeNumber(priceValue);
+  const resolvedPrev = safeNumber(previousValue);
+  return {
+    price: resolvedPrice === 0 && resolvedPrev > 0 ? resolvedPrev : resolvedPrice,
+    previous: resolvedPrev,
+  };
+}
+
+function readQuoteEntry(sym) {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(`quote:${sym}`);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function readCachedQuote(sym) {
+  const entry = readQuoteEntry(sym);
+  if (!entry || !entry.data || !entry.exp) {
+    return null;
+  }
+  if (Date.now() > entry.exp) {
+    return null;
+  }
+  return entry.data;
+}
+
+function isQuoteFresh(entry) {
+  return Boolean(entry && entry.exp && Date.now() < entry.exp);
+}
+
 function App() {
   const finnhubKey = import.meta.env.VITE_FINNHUB_KEY;
   const alphaKey = import.meta.env.VITE_ALPHAVANTAGE_KEY;
   const hasFinnhubKey = Boolean(finnhubKey);
   const hasAlphaKey = Boolean(alphaKey);
+
   const [holdings, setHoldings] = useState([]);
   const [prices, setPrices] = useState({});
   const [prevs, setPrevs] = useState({});
@@ -59,6 +104,7 @@ function App() {
 
   const toastTimerRef = useRef(null);
   const refreshCooldownRef = useRef(0);
+  const refreshMetaRef = useRef({ force: false });
   const pricesRef = useRef(prices);
   const prevsRef = useRef(prevs);
   const apiStatusRef = useRef(apiStatus);
@@ -75,9 +121,9 @@ function App() {
 
   let keyNotice = "";
   if (!hasFinnhubKey && !hasAlphaKey) {
-    keyNotice = "API keys not set â€” using mock data.";
+    keyNotice = "API keys not set — using mock data.";
   } else if (!hasFinnhubKey || apiStatus.invalidKey) {
-    keyNotice = "Finnhub key missing/invalid â€” using mock data.";
+    keyNotice = "Finnhub key missing/invalid — using mock data.";
   }
 
   const errorActive =
@@ -95,6 +141,17 @@ function App() {
   useEffect(() => {
     apiStatusRef.current = apiStatus;
   }, [apiStatus]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (selected) {
+      window.localStorage.setItem("selectedSymbol", selected);
+    } else {
+      window.localStorage.removeItem("selectedSymbol");
+    }
+  }, [selected]);
 
   useEffect(() => {
     return () => {
@@ -157,45 +214,59 @@ function App() {
   }, [showToast]);
 
   useEffect(() => {
+    const applyHoldings = (items, storedSelected) => {
+      const sanitized = items
+        .map((item) => ({
+          symbol: normalizeSymbol(item.symbol),
+          shares: Number(item.shares),
+        }))
+        .filter(
+          (item) =>
+            item.symbol.length > 0 &&
+            Number.isFinite(item.shares) &&
+            item.shares > 0
+        );
+
+      setHoldings(sanitized);
+
+      if (sanitized.length === 0) {
+        setSelected(null);
+        if (typeof window !== "undefined") {
+          window.localStorage.removeItem("selectedSymbol");
+        }
+        return;
+      }
+
+      const fallbackSymbol =
+        storedSelected &&
+        sanitized.some((item) => item.symbol === storedSelected)
+          ? storedSelected
+          : sanitized[0].symbol;
+      setSelected(fallbackSymbol);
+    };
+
     if (typeof window === "undefined") {
-      setHoldings(initialHoldings);
-      setSelected(normalizeSymbol(initialHoldings[0]?.symbol));
+      applyHoldings(initialHoldings, null);
       return;
     }
 
-    const storedValue = window.localStorage.getItem(STORAGE_KEY);
-    if (storedValue) {
+    const storedHoldings = window.localStorage.getItem(STORAGE_KEY);
+    const storedSelectedRaw = window.localStorage.getItem("selectedSymbol");
+    const storedSelected = normalizeSymbol(storedSelectedRaw);
+
+    if (storedHoldings) {
       try {
-        const parsed = JSON.parse(storedValue);
+        const parsed = JSON.parse(storedHoldings);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const sanitized = parsed
-            .map((item) => ({
-              symbol: normalizeSymbol(item.symbol),
-              shares: Number(item.shares),
-            }))
-            .filter(
-              (item) =>
-                item.symbol.length > 0 &&
-                Number.isFinite(item.shares) &&
-                item.shares > 0
-            );
-          if (sanitized.length > 0) {
-            setHoldings(sanitized);
-            setSelected(sanitized[0].symbol);
-            return;
-          }
+          applyHoldings(parsed, storedSelected);
+          return;
         }
       } catch (error) {
         console.warn("Failed to read stored holdings", error);
       }
     }
 
-    const sanitizedInitial = initialHoldings.map((item) => ({
-      symbol: normalizeSymbol(item.symbol),
-      shares: Number(item.shares),
-    }));
-    setHoldings(sanitizedInitial);
-    setSelected(normalizeSymbol(sanitizedInitial[0]?.symbol));
+    applyHoldings(initialHoldings, storedSelected);
   }, []);
 
   useEffect(() => {
@@ -218,71 +289,127 @@ function App() {
   useEffect(() => {
     let cancelled = false;
 
-    async function syncQuotes() {
-      if (typeof window !== "undefined") {
-        try {
-          window.localStorage.setItem(
-            STORAGE_KEY,
-            JSON.stringify(holdings)
-          );
-        } catch (error) {
-          console.warn("Failed to persist holdings", error);
-        }
-      }
-
-      if (holdings.length === 0) {
-        if (!cancelled) {
-          setPrices({});
-          setPrevs({});
-          setIsLoadingQuotes(false);
-        }
-        return;
-      }
-
-      if (!cancelled) {
-        setIsLoadingQuotes(true);
-      }
-
-      const nextPrices = {};
-      const nextPrevs = {};
-      const symbols = uniqueSymbols;
-
-      for (const symbol of symbols) {
-        if (cancelled) {
-          return;
-        }
-        try {
-          const quote = await fetchQuote(symbol);
-          const price = safeNumber(quote?.price);
-          const previous = safeNumber(quote?.previous_close);
-          nextPrices[symbol] =
-            price === 0 && previous > 0 ? previous : price;
-          nextPrevs[symbol] = previous;
-        } catch (error) {
-          const fallbackPrice = pricesRef.current[symbol];
-          const fallbackPrev = prevsRef.current[symbol];
-          nextPrices[symbol] =
-            typeof fallbackPrice === "number" ? fallbackPrice : 0;
-          nextPrevs[symbol] =
-            typeof fallbackPrev === "number" ? fallbackPrev : 0;
-        }
-      }
-
-      if (!cancelled) {
-        setPrices(nextPrices);
-        setPrevs(nextPrevs);
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(holdings));
+      } catch (error) {
+        console.warn("Failed to persist holdings", error);
       }
     }
 
-    syncQuotes()
-      .catch((error) => {
-        console.error("Unexpected error during quote sync", error);
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setIsLoadingQuotes(false);
+    const symbols = uniqueSymbols;
+
+    if (holdings.length === 0 || symbols.length === 0) {
+      if (!cancelled) {
+        setPrices({});
+        setPrevs({});
+        setIsLoadingQuotes(false);
+      }
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (typeof window !== "undefined") {
+      const cachedPrices = {};
+      const cachedPrevs = {};
+      symbols.forEach((sym) => {
+        const cached = readCachedQuote(sym);
+        if (cached) {
+          const resolved = resolveQuoteValues(
+            cached.price,
+            cached.previous_close
+          );
+          cachedPrices[sym] = resolved.price;
+          cachedPrevs[sym] = resolved.previous;
         }
       });
+      if (!cancelled) {
+        if (Object.keys(cachedPrices).length > 0) {
+          setPrices((prev) => ({ ...prev, ...cachedPrices }));
+        }
+        if (Object.keys(cachedPrevs).length > 0) {
+          setPrevs((prev) => ({ ...prev, ...cachedPrevs }));
+        }
+      }
+    }
+
+    const { force } = refreshMetaRef.current;
+    refreshMetaRef.current = { force: false };
+
+    const shouldFetch =
+      force ||
+      symbols.some((sym) => {
+        const entry = readQuoteEntry(sym);
+        return !isQuoteFresh(entry);
+      });
+
+    if (!shouldFetch) {
+      if (!cancelled) {
+        setIsLoadingQuotes(false);
+      }
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setIsLoadingQuotes(true);
+
+    (async () => {
+      for (const symbol of symbols) {
+        if (cancelled) {
+          break;
+        }
+
+        const entry = readQuoteEntry(symbol);
+        if (!force && isQuoteFresh(entry) && entry?.data) {
+          const resolved = resolveQuoteValues(
+            entry.data.price,
+            entry.data.previous_close
+          );
+          if (!cancelled) {
+            setPrices((prev) => ({ ...prev, [symbol]: resolved.price }));
+            setPrevs((prev) => ({ ...prev, [symbol]: resolved.previous }));
+          }
+          continue;
+        }
+
+        try {
+          const quote = await fetchQuote(symbol);
+          if (cancelled) {
+            break;
+          }
+          const resolved = resolveQuoteValues(
+            quote?.price,
+            quote?.previous_close
+          );
+          setPrices((prev) => ({ ...prev, [symbol]: resolved.price }));
+          setPrevs((prev) => ({ ...prev, [symbol]: resolved.previous }));
+        } catch (error) {
+          const fallbackPrice = pricesRef.current[symbol];
+          const fallbackPrev = prevsRef.current[symbol];
+          if (!cancelled) {
+            setPrices((prev) => ({
+              ...prev,
+              [symbol]: typeof fallbackPrice === "number" ? fallbackPrice : 0,
+            }));
+            setPrevs((prev) => ({
+              ...prev,
+              [symbol]: typeof fallbackPrev === "number" ? fallbackPrev : 0,
+            }));
+          }
+        }
+      }
+
+      if (!cancelled) {
+        setIsLoadingQuotes(false);
+      }
+    })().catch((error) => {
+      console.error("Unexpected error during quote sync", error);
+      if (!cancelled) {
+        setIsLoadingQuotes(false);
+      }
+    });
 
     return () => {
       cancelled = true;
@@ -361,29 +488,68 @@ function App() {
     setIsDark((prev) => !prev);
   }, []);
 
+  const requestRefresh = useCallback(
+    (force = false) => {
+      const now = Date.now();
+      if (!force && now - refreshCooldownRef.current < REFRESH_COOLDOWN) {
+        return;
+      }
+      refreshCooldownRef.current = now;
+      refreshMetaRef.current = { force };
+      setRefreshTick((tick) => tick + 1);
+    },
+    []
+  );
+
   const handleRefresh = useCallback(() => {
-    const now = Date.now();
-    if (now - refreshCooldownRef.current < REFRESH_COOLDOWN) {
-      return;
+    requestRefresh(false);
+  }, [requestRefresh]);
+
+  const handleForceRefresh = useCallback(() => {
+    requestRefresh(true);
+  }, [requestRefresh]);
+
+  const diagnostics = useMemo(() => {
+    if (!import.meta.env.DEV || typeof window === "undefined") {
+      return null;
     }
-    refreshCooldownRef.current = now;
-    setRefreshTick((tick) => tick + 1);
-  }, []);
-
-  const themeAriaLabel = isDark ? "Switch to light theme" : "Switch to dark theme";
-  const themeLabel = isDark ? "Light" : "Dark";
-
-  const diagnostics = useMemo(
-    () => ({
+    const cacheStatus = uniqueSymbols.map((sym) => {
+      const entry = readQuoteEntry(sym);
+      if (!entry) {
+        return { symbol: sym, cached: false };
+      }
+      try {
+        const { exp, data } = entry;
+        const expiryMs = typeof exp === "number" ? exp : Date.now() + FRESH_MS;
+        const fresh = isQuoteFresh(entry);
+        return {
+          symbol: sym,
+          cached: true,
+          fresh,
+          secondsLeft: Math.max(0, Math.floor((expiryMs - Date.now()) / 1000)),
+          price: data?.price ?? null,
+        };
+      } catch {
+        return { symbol: sym, cached: true, parseError: true };
+      }
+    });
+    return {
       finnhubKeyPresent: hasFinnhubKey,
       alphaVantageKeyPresent: hasAlphaKey,
-      invalidKey: apiStatus.invalidKey,
+      selected,
       lastError: apiStatus.lastError,
       lastErrorAt: apiStatus.lastErrorAt,
       symbols: uniqueSymbols,
-    }),
-    [apiStatus, hasAlphaKey, hasFinnhubKey, uniqueSymbols]
-  );
+      cacheStatus,
+    };
+  }, [
+    hasFinnhubKey,
+    hasAlphaKey,
+    selected,
+    apiStatus.lastError,
+    apiStatus.lastErrorAt,
+    uniqueSymbols,
+  ]);
 
   return (
     <>
@@ -406,9 +572,9 @@ function App() {
             type="button"
             className="btn btn--ghost btn--icon theme-toggle"
             onClick={handleToggleTheme}
-            aria-label={themeAriaLabel}
+            aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
           >
-            <span aria-hidden="true">{themeLabel}</span>
+            <span aria-hidden="true">{isDark ? "Light" : "Dark"}</span>
           </button>
         </header>
 
@@ -424,15 +590,25 @@ function App() {
         <section className="card fade-in" aria-label="Holdings table">
           <div className="card-header">
             <h2>Holdings</h2>
-            <button
-              type="button"
-              className="btn btn--ghost"
-              onClick={handleRefresh}
-              disabled={isLoadingQuotes}
-              aria-label="Refresh quotes"
-            >
-              {isLoadingQuotes ? "Refreshing..." : "Refresh"}
-            </button>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className="btn btn--ghost"
+                onClick={handleRefresh}
+                disabled={isLoadingQuotes}
+                aria-label="Refresh quotes"
+              >
+                {isLoadingQuotes ? "Refreshing..." : "Refresh"}
+              </button>
+              <button
+                type="button"
+                className="btn btn--ghost"
+                onClick={handleForceRefresh}
+                aria-label="Force refresh all symbols"
+              >
+                Force Refresh
+              </button>
+            </div>
           </div>
           <HoldingsTable
             holdings={holdings}
@@ -449,7 +625,7 @@ function App() {
           <StockChart symbol={selected} />
         </section>
 
-        {import.meta.env.DEV ? (
+        {import.meta.env.DEV && diagnostics ? (
           <details className="diagnostics">
             <summary>Diagnostics</summary>
             <pre>{JSON.stringify(diagnostics, null, 2)}</pre>
