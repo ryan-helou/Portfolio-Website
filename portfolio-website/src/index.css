@@ -146,6 +146,14 @@ h3 {
   box-shadow: 0 22px 40px rgba(15, 23, 42, 0.16);
 }
 
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
 .metrics-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -402,6 +410,35 @@ label {
   background: color-mix(in srgb, var(--card) 90%, var(--bg) 10%);
   color: var(--text-muted);
   text-align: center;
+}
+
+.banner {
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--card) 85%, var(--bg) 15%);
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  text-align: center;
+  align-self: stretch;
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: clamp(var(--space-6), 8vw, 72px);
+  transform: translateX(-50%);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--card) 90%, var(--bg) 10%);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  min-width: min(320px, 90vw);
+  text-align: center;
+  font-size: 0.9rem;
+  z-index: 1000;
 }
 
 .chart {

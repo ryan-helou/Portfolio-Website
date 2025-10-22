@@ -15,9 +15,6 @@ export default function HoldingsTable({
   if (!holdings.length) {
     return (
       <div className="empty" role="status">
-        <span aria-hidden="true" style={{ fontSize: "2rem" }}>
-          📭
-        </span>
         <p>No holdings yet.</p>
         <p className="helper">Add your first symbol above to start tracking.</p>
       </div>
@@ -25,20 +22,26 @@ export default function HoldingsTable({
   }
 
   function renderRow({ symbol, shares }) {
-    const price = prices[symbol];
-    const value =
-      price != null && !Number.isNaN(price) ? Number(price) * shares : null;
-    const formattedPrice =
-      price != null && !Number.isNaN(price)
-        ? currencyFormatter.format(price)
-        : "--";
-    const formattedValue =
-      value != null ? currencyFormatter.format(value) : "--";
+    const priceNumber = Number(prices[symbol]);
     const sharesNumber = Number(shares);
-    const formattedShares = sharesNumber.toLocaleString("en-US", {
-      minimumFractionDigits: Number.isInteger(sharesNumber) ? 0 : 2,
-      maximumFractionDigits: 4,
-    });
+    const hasPrice = Number.isFinite(priceNumber);
+    const hasShares = Number.isFinite(sharesNumber);
+    const safeShares = hasShares ? sharesNumber : 0;
+    const valueNumber = hasPrice ? priceNumber * safeShares : null;
+
+    const formattedShares = hasShares
+      ? sharesNumber.toLocaleString("en-US", {
+          minimumFractionDigits: Number.isInteger(sharesNumber) ? 0 : 2,
+          maximumFractionDigits: 4,
+        })
+      : "--";
+
+    const formattedPrice = hasPrice
+      ? currencyFormatter.format(priceNumber)
+      : "--";
+
+    const formattedValue =
+      valueNumber != null ? currencyFormatter.format(valueNumber) : "--";
     const isSelected = selectedSymbol === symbol;
 
     return (

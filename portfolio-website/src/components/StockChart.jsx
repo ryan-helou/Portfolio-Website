@@ -5,14 +5,21 @@ const VIEWBOX_WIDTH = 600;
 const VIEWBOX_HEIGHT = 220;
 
 function computePaths(data) {
-  if (!data.length) {
-    return { line: "", area: "", values: [] };
+  if (!Array.isArray(data) || data.length === 0) {
+    return { line: "", area: "" };
   }
 
-  const numericPoints = data.map((point) => ({
-    datetime: point.datetime,
-    close: Number(point.close),
-  }));
+  const numericPoints = data
+    .map((point) => ({
+      datetime: point?.datetime ?? "",
+      close: Number(point?.close),
+    }))
+    .filter((point) => point.datetime && Number.isFinite(point.close));
+
+  if (!numericPoints.length) {
+    return { line: "", area: "" };
+  }
+
   const closes = numericPoints.map((point) => point.close);
   const min = Math.min(...closes);
   const max = Math.max(...closes);
@@ -31,11 +38,12 @@ function computePaths(data) {
   const line = points
     .map((point, index) => `${index === 0 ? "M" : "L"}${point.x} ${point.y}`)
     .join(" ");
+
   const firstPoint = points[0];
   const lastPoint = points[points.length - 1];
   const area = `${line} L${lastPoint.x} ${VIEWBOX_HEIGHT} L${firstPoint.x} ${VIEWBOX_HEIGHT} Z`;
 
-  return { line, area, values: numericPoints };
+  return { line, area };
 }
 
 export default function StockChart({ symbol }) {
@@ -46,20 +54,33 @@ export default function StockChart({ symbol }) {
     let active = true;
 
     async function loadData() {
-      if (!symbol) {
-        setSeries([]);
-        setLoading(false);
+      const trimmed = typeof symbol === "string" ? symbol.trim() : "";
+      if (!trimmed) {
+        if (active) {
+          setSeries([]);
+          setLoading(false);
+        }
         return;
       }
 
       setLoading(true);
       try {
-        const response = await fetchSeries(symbol);
-        if (active) {
-          setSeries(response.values || []);
+        const response = await fetchSeries(trimmed, "1day", 30);
+        if (!active) {
+          return;
         }
+
+        const values = Array.isArray(response.values)
+          ? response.values.filter((point) => {
+              const closeNumber = Number(point?.close);
+              const datetime = point?.datetime ?? "";
+              return datetime && Number.isFinite(closeNumber);
+            })
+          : [];
+
+        setSeries(values);
       } catch (error) {
-        console.warn("Failed to load series", error);
+        console.warn(`Failed to load series for ${symbol}`, error);
         if (active) {
           setSeries([]);
         }
@@ -81,9 +102,6 @@ export default function StockChart({ symbol }) {
   if (!symbol) {
     return (
       <div className="empty">
-        <span aria-hidden="true" style={{ fontSize: "2rem" }}>
-          📈
-        </span>
         <p>Select a holding to preview the sparkline.</p>
       </div>
     );
@@ -100,9 +118,6 @@ export default function StockChart({ symbol }) {
   if (!series.length || !line) {
     return (
       <div className="empty">
-        <span aria-hidden="true" style={{ fontSize: "2rem" }}>
-          ⏳
-        </span>
         <p>No data yet. Select a holding.</p>
       </div>
     );
