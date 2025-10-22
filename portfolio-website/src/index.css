@@ -423,6 +423,12 @@ label {
   align-self: stretch;
 }
 
+.banner--error {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border) 65%);
+  background: color-mix(in srgb, var(--danger) 12%, var(--card) 88%);
+  color: var(--danger);
+}
+
 .toast {
   position: fixed;
   left: 50%;
@@ -439,6 +445,20 @@ label {
   text-align: center;
   font-size: 0.9rem;
   z-index: 1000;
+}
+
+.diagnostics {
+  margin-top: var(--space-4);
+}
+
+.diagnostics pre {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3);
+  background: color-mix(in srgb, var(--card) 90%, var(--bg) 10%);
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  font-size: 0.85rem;
+  overflow-x: auto;
 }
 
 .chart {

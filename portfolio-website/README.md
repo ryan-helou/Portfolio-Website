@@ -1,6 +1,6 @@
-# Portfolio Tracker (Mock)
+﻿# Portfolio Tracker
 
-A minimal holdings tracker built with Vite + React. The current version uses mock data and a lightweight API layer that you can later replace with real Twelve Data endpoints.
+A minimal holdings tracker built with Vite + React. It ships with mock data but can fetch live quotes from Finnhub (with an optional Alpha Vantage fallback) without additional libraries.
 
 ## Getting Started
 
@@ -9,8 +9,17 @@ A minimal holdings tracker built with Vite + React. The current version uses moc
 
 The UI persists holdings to `localStorage`, so changes survive a browser refresh.
 
-## Swapping to the Twelve Data API
+## Live Market Data (Finnhub)
+1. Copy `.env.example` to `.env`.
+2. Paste your Finnhub token: `VITE_FINNHUB_KEY=YOUR_TOKEN`.
+3. (Optional) Add `VITE_ALPHAVANTAGE_KEY` as a fallback.
+4. With no key, the app will transparently use mock data.
+5. TSX tickers (e.g., `AC.TO`) are supported.
 
-- Add a `.env` file in the project root with `VITE_TWELVEDATA_KEY=YOUR_KEY`.
-- Update the fetch logic inside `src/api/twelve.js` to call the real `/quote` and `/time_series` endpoints using `import.meta.env.VITE_TWELVEDATA_KEY`.
-- Remove or adjust the mock exports defined in `src/mock.js` once live data is wired up.
+## Live Data Keys
+- Create `.env` from `.env.example`.
+- Put `VITE_FINNHUB_KEY` (primary) and optionally `VITE_ALPHAVANTAGE_KEY` (fallback).
+- App tries Finnhub first; on symbol failure/empty data it falls back to Alpha Vantage.
+- TSX tickers (e.g., `AC.TO`) supported via fallback.
+- With no keys, app uses mock data.
+

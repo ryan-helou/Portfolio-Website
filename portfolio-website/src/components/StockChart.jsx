@@ -54,8 +54,9 @@ export default function StockChart({ symbol }) {
     let active = true;
 
     async function loadData() {
-      const trimmed = typeof symbol === "string" ? symbol.trim() : "";
-      if (!trimmed) {
+      const normalized =
+        typeof symbol === "string" ? symbol.toUpperCase().trim() : "";
+      if (!normalized) {
         if (active) {
           setSeries([]);
           setLoading(false);
@@ -65,7 +66,7 @@ export default function StockChart({ symbol }) {
 
       setLoading(true);
       try {
-        const response = await fetchSeries(trimmed, "1day", 30);
+        const response = await fetchSeries(normalized, "1day", 30);
         if (!active) {
           return;
         }
@@ -80,7 +81,7 @@ export default function StockChart({ symbol }) {
 
         setSeries(values);
       } catch (error) {
-        console.warn(`Failed to load series for ${symbol}`, error);
+        console.warn(`Failed to load series for ${normalized}`, error);
         if (active) {
           setSeries([]);
         }
@@ -98,8 +99,10 @@ export default function StockChart({ symbol }) {
   }, [symbol]);
 
   const { line, area } = useMemo(() => computePaths(series), [series]);
+  const normalizedSymbol =
+    typeof symbol === "string" ? symbol.toUpperCase().trim() : "";
 
-  if (!symbol) {
+  if (!normalizedSymbol) {
     return (
       <div className="empty">
         <p>Select a holding to preview the sparkline.</p>
@@ -126,13 +129,13 @@ export default function StockChart({ symbol }) {
   return (
     <div className="chart fade-in">
       <div className="chart__legend">
-        <span className="tag">{symbol}</span>
+        <span className="tag">{normalizedSymbol}</span>
       </div>
       <svg
         viewBox={`0 0 ${VIEWBOX_WIDTH} ${VIEWBOX_HEIGHT}`}
         preserveAspectRatio="none"
         role="img"
-        aria-label={`Price history for ${symbol}`}
+        aria-label={`Price history for ${normalizedSymbol}`}
       >
         <defs>
           <linearGradient

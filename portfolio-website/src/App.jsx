@@ -10,13 +10,16 @@ import HoldingsTable from "./components/HoldingsTable";
 import MetricsBar from "./components/MetricsBar";
 import StockChart from "./components/StockChart";
 import { initialHoldings } from "./mock";
-import { fetchQuote, useMock } from "./api/twelve";
+import { apiState, fetchQuote } from "./api/twelve";
 
 const STORAGE_KEY = "portfolio-holdings";
 const THEME_KEY = "theme";
-const MOCK_NOTICE = "Twelve Data API key not set — using mock data.";
-const CONNECTION_NOTICE = "Quotes may be stale — check your connection.";
 const REFRESH_COOLDOWN = 1500;
+const ERROR_WINDOW_MS = 15_000;
+
+function normalizeSymbol(symbol) {
+  return (symbol || "").toUpperCase().trim();
+}
 
 function safeNumber(value) {
   const num = Number(value);
@@ -24,15 +27,14 @@ function safeNumber(value) {
 }
 
 function App() {
-  const usingMock = useMock();
+  const finnhubKey = import.meta.env.VITE_FINNHUB_KEY;
+  const alphaKey = import.meta.env.VITE_ALPHAVANTAGE_KEY;
+  const hasFinnhubKey = Boolean(finnhubKey);
+  const hasAlphaKey = Boolean(alphaKey);
   const [holdings, setHoldings] = useState([]);
   const [prices, setPrices] = useState({});
   const [prevs, setPrevs] = useState({});
   const [selected, setSelected] = useState(null);
-  const [notice, setNotice] = useState(() => (usingMock ? MOCK_NOTICE : ""));
-  const [toast, setToast] = useState("");
-  const [refreshTick, setRefreshTick] = useState(0);
-  const [isLoadingQuotes, setIsLoadingQuotes] = useState(false);
   const [isDark, setIsDark] = useState(() => {
     if (typeof window === "undefined") {
       return false;
@@ -46,11 +48,41 @@ function App() {
     }
     return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false;
   });
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [isLoadingQuotes, setIsLoadingQuotes] = useState(false);
+  const [toast, setToast] = useState("");
+  const [apiStatus, setApiStatus] = useState({
+    lastError: apiState.lastError,
+    lastErrorAt: apiState.lastErrorAt,
+    invalidKey: apiState.invalidKey,
+  });
 
-  const refreshCooldownRef = useRef(0);
   const toastTimerRef = useRef(null);
+  const refreshCooldownRef = useRef(0);
   const pricesRef = useRef(prices);
   const prevsRef = useRef(prevs);
+  const apiStatusRef = useRef(apiStatus);
+
+  const uniqueSymbols = useMemo(() => {
+    return Array.from(
+      new Set(
+        holdings
+          .map((holding) => normalizeSymbol(holding.symbol))
+          .filter((sym) => sym.length > 0)
+      )
+    );
+  }, [holdings]);
+
+  let keyNotice = "";
+  if (!hasFinnhubKey && !hasAlphaKey) {
+    keyNotice = "API keys not set — using mock data.";
+  } else if (!hasFinnhubKey || apiStatus.invalidKey) {
+    keyNotice = "Finnhub key missing/invalid — using mock data.";
+  }
+
+  const errorActive =
+    Boolean(apiStatus.lastError) &&
+    Date.now() - apiStatus.lastErrorAt < ERROR_WINDOW_MS;
 
   useEffect(() => {
     pricesRef.current = prices;
@@ -61,6 +93,10 @@ function App() {
   }, [prevs]);
 
   useEffect(() => {
+    apiStatusRef.current = apiStatus;
+  }, [apiStatus]);
+
+  useEffect(() => {
     return () => {
       if (toastTimerRef.current) {
         clearTimeout(toastTimerRef.current);
@@ -69,50 +105,97 @@ function App() {
     };
   }, []);
 
-  const showToast = useCallback(
-    (message) => {
-      if (toastTimerRef.current) {
-        clearTimeout(toastTimerRef.current);
-        toastTimerRef.current = null;
-      }
+  const showToast = useCallback((message) => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
 
-      if (!message) {
+    if (!message) {
+      setToast("");
+      return;
+    }
+
+    setToast(message);
+    if (typeof window !== "undefined") {
+      toastTimerRef.current = window.setTimeout(() => {
         setToast("");
-        return;
-      }
-
-      setToast(message);
-      if (typeof window !== "undefined") {
-        toastTimerRef.current = window.setTimeout(() => {
-          setToast("");
-          toastTimerRef.current = null;
-        }, 4000);
-      }
-    },
-    [setToast]
-  );
+        toastTimerRef.current = null;
+      }, 4000);
+    }
+  }, []);
 
   useEffect(() => {
-    const storedValue =
-      typeof window !== "undefined"
-        ? window.localStorage.getItem(STORAGE_KEY)
-        : null;
+    if (typeof window === "undefined") {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      const nextStatus = {
+        lastError: apiState.lastError,
+        lastErrorAt: apiState.lastErrorAt,
+        invalidKey: apiState.invalidKey,
+      };
 
+      const previous = apiStatusRef.current;
+      const changed =
+        previous.lastError !== nextStatus.lastError ||
+        previous.lastErrorAt !== nextStatus.lastErrorAt ||
+        previous.invalidKey !== nextStatus.invalidKey;
+
+      if (changed) {
+        apiStatusRef.current = nextStatus;
+        setApiStatus(nextStatus);
+        if (nextStatus.lastError && nextStatus.lastErrorAt) {
+          showToast(nextStatus.lastError);
+        }
+      }
+    }, 1000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [showToast]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      setHoldings(initialHoldings);
+      setSelected(normalizeSymbol(initialHoldings[0]?.symbol));
+      return;
+    }
+
+    const storedValue = window.localStorage.getItem(STORAGE_KEY);
     if (storedValue) {
       try {
         const parsed = JSON.parse(storedValue);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          setHoldings(parsed);
-          setSelected(parsed[0].symbol);
-          return;
+          const sanitized = parsed
+            .map((item) => ({
+              symbol: normalizeSymbol(item.symbol),
+              shares: Number(item.shares),
+            }))
+            .filter(
+              (item) =>
+                item.symbol.length > 0 &&
+                Number.isFinite(item.shares) &&
+                item.shares > 0
+            );
+          if (sanitized.length > 0) {
+            setHoldings(sanitized);
+            setSelected(sanitized[0].symbol);
+            return;
+          }
         }
       } catch (error) {
-        console.warn("Failed to parse stored holdings", error);
+        console.warn("Failed to read stored holdings", error);
       }
     }
 
-    setHoldings(initialHoldings);
-    setSelected(initialHoldings[0]?.symbol ?? null);
+    const sanitizedInitial = initialHoldings.map((item) => ({
+      symbol: normalizeSymbol(item.symbol),
+      shares: Number(item.shares),
+    }));
+    setHoldings(sanitizedInitial);
+    setSelected(normalizeSymbol(sanitizedInitial[0]?.symbol));
   }, []);
 
   useEffect(() => {
@@ -127,7 +210,7 @@ function App() {
       try {
         window.localStorage.setItem(THEME_KEY, isDark ? "dark" : "light");
       } catch (error) {
-        console.warn("Failed to persist theme preference", error);
+        console.warn("Failed to persist theme", error);
       }
     }
   }, [isDark]);
@@ -152,9 +235,6 @@ function App() {
           setPrices({});
           setPrevs({});
           setIsLoadingQuotes(false);
-          if (!usingMock) {
-            setNotice("");
-          }
         }
         return;
       }
@@ -163,26 +243,22 @@ function App() {
         setIsLoadingQuotes(true);
       }
 
-      const symbols = Array.from(
-        new Set(
-          holdings
-            .map((item) => item.symbol)
-            .filter((symbol) => typeof symbol === "string" && symbol)
-        )
-      );
-
       const nextPrices = {};
       const nextPrevs = {};
-      let hadError = false;
+      const symbols = uniqueSymbols;
 
       for (const symbol of symbols) {
+        if (cancelled) {
+          return;
+        }
         try {
           const quote = await fetchQuote(symbol);
-          nextPrices[symbol] = safeNumber(quote?.price);
-          nextPrevs[symbol] = safeNumber(quote?.previous_close);
+          const price = safeNumber(quote?.price);
+          const previous = safeNumber(quote?.previous_close);
+          nextPrices[symbol] =
+            price === 0 && previous > 0 ? previous : price;
+          nextPrevs[symbol] = previous;
         } catch (error) {
-          console.warn(`Failed to load quote for ${symbol}`, error);
-          hadError = true;
           const fallbackPrice = pricesRef.current[symbol];
           const fallbackPrev = prevsRef.current[symbol];
           nextPrices[symbol] =
@@ -195,32 +271,23 @@ function App() {
       if (!cancelled) {
         setPrices(nextPrices);
         setPrevs(nextPrevs);
-        if (!usingMock) {
-          setNotice(hadError ? CONNECTION_NOTICE : "");
-        }
-        if (hadError) {
-          showToast(CONNECTION_NOTICE);
-        }
-        setIsLoadingQuotes(false);
       }
     }
 
-    syncQuotes().catch((error) => {
-      if (cancelled) {
-        return;
-      }
-      console.error("Unexpected error while loading quotes", error);
-      if (!usingMock) {
-        setNotice(CONNECTION_NOTICE);
-      }
-      showToast(CONNECTION_NOTICE);
-      setIsLoadingQuotes(false);
-    });
+    syncQuotes()
+      .catch((error) => {
+        console.error("Unexpected error during quote sync", error);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingQuotes(false);
+        }
+      });
 
     return () => {
       cancelled = true;
     };
-  }, [holdings, refreshTick, showToast, usingMock]);
+  }, [holdings, refreshTick, uniqueSymbols]);
 
   useEffect(() => {
     if (holdings.length === 0) {
@@ -228,66 +295,108 @@ function App() {
       return;
     }
 
-    const hasSelected = holdings.some((item) => item.symbol === selected);
+    const current = normalizeSymbol(selected);
+    const hasSelected = holdings.some(
+      (item) => normalizeSymbol(item.symbol) === current
+    );
     if (!hasSelected) {
-      setSelected(holdings[0].symbol);
+      setSelected(normalizeSymbol(holdings[0].symbol));
     }
   }, [holdings, selected]);
 
   const portfolioValue = useMemo(() => {
-    return holdings.reduce((sum, { symbol, shares }) => {
-      const price = prices[symbol] ?? 0;
-      return sum + shares * price;
+    return holdings.reduce((sum, holding) => {
+      const sym = normalizeSymbol(holding.symbol);
+      if (!sym) {
+        return sum;
+      }
+      const price = prices[sym] ?? 0;
+      return sum + holding.shares * price;
     }, 0);
   }, [holdings, prices]);
 
   const todayChange = useMemo(() => {
-    return holdings.reduce((sum, { symbol, shares }) => {
-      const price = prices[symbol] ?? 0;
-      const prev = prevs[symbol] ?? 0;
-      return sum + shares * (price - prev);
+    return holdings.reduce((sum, holding) => {
+      const sym = normalizeSymbol(holding.symbol);
+      if (!sym) {
+        return sum;
+      }
+      const price = prices[sym] ?? 0;
+      const prev = prevs[sym] ?? 0;
+      return sum + holding.shares * (price - prev);
     }, 0);
   }, [holdings, prices, prevs]);
 
-  function handleAddHolding({ symbol, shares }) {
+  const handleAddHolding = useCallback(({ symbol, shares }) => {
+    const sym = normalizeSymbol(symbol);
+    const shareCount = Number(shares);
+    if (!sym || !Number.isFinite(shareCount) || shareCount <= 0) {
+      return;
+    }
+
     setHoldings((current) => {
-      const existing = current.find((item) => item.symbol === symbol);
+      const existing = current.find(
+        (item) => normalizeSymbol(item.symbol) === sym
+      );
       if (existing) {
         return current.map((item) =>
-          item.symbol === symbol
-            ? { ...item, shares: item.shares + shares }
+          normalizeSymbol(item.symbol) === sym
+            ? { ...item, shares: item.shares + shareCount }
             : item
         );
       }
-      return [...current, { symbol, shares }];
+      return [...current, { symbol: sym, shares: shareCount }];
     });
-  }
+    setSelected((current) => current ?? sym);
+  }, []);
 
-  function handleRemoveHolding(symbol) {
-    setHoldings((current) => current.filter((item) => item.symbol !== symbol));
-  }
+  const handleRemoveHolding = useCallback((symbol) => {
+    const sym = normalizeSymbol(symbol);
+    setHoldings((current) =>
+      current.filter((item) => normalizeSymbol(item.symbol) !== sym)
+    );
+  }, []);
 
-  function handleToggleTheme() {
+  const handleToggleTheme = useCallback(() => {
     setIsDark((prev) => !prev);
-  }
+  }, []);
 
-  function handleRefresh() {
+  const handleRefresh = useCallback(() => {
     const now = Date.now();
     if (now - refreshCooldownRef.current < REFRESH_COOLDOWN) {
       return;
     }
     refreshCooldownRef.current = now;
     setRefreshTick((tick) => tick + 1);
-  }
+  }, []);
 
+  const themeAriaLabel = isDark ? "Switch to light theme" : "Switch to dark theme";
   const themeLabel = isDark ? "Light" : "Dark";
+
+  const diagnostics = useMemo(
+    () => ({
+      finnhubKeyPresent: hasFinnhubKey,
+      alphaVantageKeyPresent: hasAlphaKey,
+      invalidKey: apiStatus.invalidKey,
+      lastError: apiStatus.lastError,
+      lastErrorAt: apiStatus.lastErrorAt,
+      symbols: uniqueSymbols,
+    }),
+    [apiStatus, hasAlphaKey, hasFinnhubKey, uniqueSymbols]
+  );
 
   return (
     <>
       <div className="container">
-        {notice ? (
+        {keyNotice ? (
           <div className="banner" role="status" aria-live="polite">
-            {notice}
+            {keyNotice}
+          </div>
+        ) : null}
+
+        {errorActive ? (
+          <div className="banner banner--error" role="status" aria-live="polite">
+            {`Live data error: ${apiStatus.lastError}. Showing cached or mock values.`}
           </div>
         ) : null}
 
@@ -297,7 +406,7 @@ function App() {
             type="button"
             className="btn btn--ghost btn--icon theme-toggle"
             onClick={handleToggleTheme}
-            aria-label="Toggle theme"
+            aria-label={themeAriaLabel}
           >
             <span aria-hidden="true">{themeLabel}</span>
           </button>
@@ -329,8 +438,9 @@ function App() {
             holdings={holdings}
             prices={prices}
             onRemove={handleRemoveHolding}
-            onSelect={setSelected}
+            onSelect={(symbol) => setSelected(normalizeSymbol(symbol))}
             selectedSymbol={selected}
+            errorActive={errorActive}
           />
         </section>
 
@@ -338,6 +448,13 @@ function App() {
           <h2>Performance</h2>
           <StockChart symbol={selected} />
         </section>
+
+        {import.meta.env.DEV ? (
+          <details className="diagnostics">
+            <summary>Diagnostics</summary>
+            <pre>{JSON.stringify(diagnostics, null, 2)}</pre>
+          </details>
+        ) : null}
       </div>
 
       {toast ? (

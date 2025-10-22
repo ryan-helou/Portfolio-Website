@@ -1,289 +1,276 @@
-const KEY = import.meta.env.VITE_TWELVEDATA_KEY || "";
-const BASE_URL = "https://api.twelvedata.com";
-const QUOTE_TTL = 60 * 1000;
-const SERIES_TTL = 5 * 60 * 1000;
-const STORAGE_PREFIX = "td-cache:";
+// src/api/twelve.js
+// Finnhub-first with Alpha Vantage per-symbol fallback, then mocks.
+// Keeps the same exported API used by the app: fetchQuote, fetchSeries
+// - Caches in memory + localStorage (TTL: quotes 60s; series 5min)
+// - Normalizes symbols (uppercase, trim)
+// - Encodes symbols with encodeURIComponent (supports dots like AC.TO)
+// - Surfaces shared apiState for banners/toasts
 
-const memoryCache = new Map();
-let mockModulePromise;
+const KEY_FH  = import.meta.env.VITE_FINNHUB_KEY || "";
+const KEY_AV  = import.meta.env.VITE_ALPHAVANTAGE_KEY || "";
+const USE_FH  = !!KEY_FH;
+const USE_AV  = !!KEY_AV;
 
-export function useMock() {
-  return !KEY;
+const QUOTE_TTL_MS  = 60 * 1000;
+const SERIES_TTL_MS = 5 * 60 * 1000;
+
+const mem = {
+  quotes: new Map(), // key -> { data, exp }
+  series: new Map(), // key -> { data, exp }
+};
+
+export const apiState = {
+  lastError: null,
+  lastErrorAt: 0,
+  invalidKey: false,
+};
+
+function setError(msg) {
+  apiState.lastError = String(msg || "Unknown error");
+  apiState.lastErrorAt = Date.now();
+  console.warn("[API]", apiState.lastError);
 }
 
-function buildCacheKey(type, identifier) {
-  return `${STORAGE_PREFIX}${type}:${identifier}`;
-}
+function now() { return Date.now(); }
 
-function deepClone(value) {
-  if (value == null) {
-    return value;
-  }
+function readLS(key) {
   try {
-    return JSON.parse(JSON.stringify(value));
-  } catch (error) {
-    console.warn("deepClone failed; returning original reference", error);
-    return value;
-  }
-}
-
-function readCache(cacheKey, { allowExpired = false } = {}) {
-  const now = Date.now();
-  const memoryEntry = memoryCache.get(cacheKey);
-  if (memoryEntry) {
-    if (memoryEntry.expiry > now || allowExpired) {
-      if (memoryEntry.expiry <= now && !allowExpired) {
-        memoryCache.delete(cacheKey);
-        return null;
-      }
-      return deepClone(memoryEntry.value);
-    }
-    memoryCache.delete(cacheKey);
-  }
-
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  try {
-    const raw = window.localStorage.getItem(cacheKey);
-    if (!raw) {
-      return null;
-    }
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (parsed.expiry > now) {
-      const cloned = deepClone(parsed.value);
-      memoryCache.set(cacheKey, {
-        expiry: parsed.expiry,
-        value: cloned,
-      });
-      return cloned;
-    }
-    if (allowExpired) {
-      return deepClone(parsed.value);
-    }
-    window.localStorage.removeItem(cacheKey);
-  } catch (error) {
-    console.warn("Failed to read cached value", error);
-  }
+    if (!parsed || !parsed.exp || parsed.exp < now()) return null;
+    return parsed.data;
+  } catch { return null; }
+}
 
+function writeLS(key, data, ttlMs) {
+  try {
+    localStorage.setItem(key, JSON.stringify({ data, exp: now() + ttlMs }));
+  } catch { /* ignore quota */ }
+}
+
+function readCache(map, key) {
+  const m = map.get(key);
+  if (m && m.exp > now()) return m.data;
+  const ls = readLS(key);
+  if (ls) {
+    map.set(key, { data: ls, exp: now() + 500 });
+    return ls;
+  }
   return null;
 }
 
-function storeCache(cacheKey, value, ttl) {
-  const expiry = Date.now() + ttl;
-  const cloned = deepClone(value);
-  memoryCache.set(cacheKey, { value: cloned, expiry });
-
-  if (typeof window !== "undefined") {
-    try {
-      window.localStorage.setItem(
-        cacheKey,
-        JSON.stringify({ value: cloned, expiry })
-      );
-    } catch (error) {
-      console.warn("Failed to persist cache to localStorage", error);
-    }
-  }
-}
-
-async function loadMocks() {
-  if (!mockModulePromise) {
-    mockModulePromise = import("../mock.js");
-  }
-  return mockModulePromise;
-}
-
-function toNumber(value, fallback = 0) {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : fallback;
-}
-
-async function fetchMockQuote(symbol) {
-  const { mockQuote = {} } = await loadMocks();
-  const entry = mockQuote[symbol];
-  if (!entry) {
-    return { price: 0, previous_close: 0 };
-  }
-  return {
-    price: toNumber(entry.price),
-    previous_close: toNumber(entry.prevClose ?? entry.previous_close),
-  };
-}
-
-async function fetchMockSeries(symbol, interval, output) {
-  const { mockSeries = {} } = await loadMocks();
-  const rawSeries = mockSeries[symbol] || [];
-  const limit = Number.isInteger(output) && output > 0 ? output : 30;
-  const values = [];
-
-  for (const point of rawSeries) {
-    if (values.length >= limit) {
-      break;
-    }
-    const closeNumber = Number(point.close);
-    if (!Number.isFinite(closeNumber)) {
-      continue;
-    }
-    const datetime = point.datetime ?? "";
-    if (!datetime) {
-      continue;
-    }
-    values.push({
-      datetime,
-      close: closeNumber.toString(),
-    });
-  }
-
-  return { values };
+function writeCache(map, key, data, ttlMs) {
+  map.set(key, { data, exp: now() + ttlMs });
+  writeLS(key, data, ttlMs);
 }
 
 async function getJSON(url) {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Request failed with status ${response.status}`);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  if ((json && json.status === "error") || json.code || json.error || json.note || json["Error Message"]) {
+    const msg = json.error || json.message || json.note || json["Error Message"] || "API error";
+    throw new Error(msg);
   }
-  const data = await response.json();
-  if (data?.status === "error") {
-    throw new Error(data?.message || "Twelve Data API error");
+  return json;
+}
+
+// -------- Mock loader (deferred import to avoid cycles) --------
+async function loadMock() {
+  const m = await import("../mock.js");
+  return {
+    quote(sym) {
+      const s = m.mockQuote?.[sym] || {};
+      return {
+        price: Number(s.price) || 0,
+        previous_close: Number(s.prevClose) || 0,
+      };
+    },
+    series(sym, output = 30) {
+      const arr = (m.mockSeries?.[sym] || []).slice(-output);
+      return {
+        values: arr.map(v => ({
+          datetime: String(v.datetime),
+          close: String(v.close),
+        })),
+      };
+    },
+  };
+}
+
+// ---------------- Finnhub ----------------
+async function fhFetchQuote(sym) {
+  if (!USE_FH) throw new Error("Finnhub key missing");
+  const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(sym)}&token=${KEY_FH}`;
+  const j = await getJSON(url);
+  const price = Number(j.c);
+  const pc = Number(j.pc);
+  return {
+    price: Number.isFinite(price) ? price : 0,
+    previous_close: Number.isFinite(pc) ? pc : 0,
+  };
+}
+
+async function fhFetchSeries(sym, output = 30) {
+  if (!USE_FH) throw new Error("Finnhub key missing");
+  const to = Math.floor(Date.now() / 1000);
+  const approxDays = Math.max(output * 2, 60);
+  const from = to - approxDays * 86400;
+  const url = `https://finnhub.io/api/v1/stock/candle?symbol=${encodeURIComponent(sym)}&resolution=D&from=${from}&to=${to}&token=${KEY_FH}`;
+  const j = await getJSON(url);
+  if (!j || j.s !== "ok" || !Array.isArray(j.t) || !Array.isArray(j.c)) return { values: [] };
+  const vals = j.t.map((ts, i) => ({
+    datetime: new Date(ts * 1000).toISOString().slice(0, 10),
+    close: String(j.c[i]),
+  }));
+  return { values: vals.slice(-output) };
+}
+
+// --------------- Alpha Vantage ---------------
+async function avFetchQuote(sym) {
+  if (!USE_AV) throw new Error("Alpha Vantage key missing");
+  const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(sym)}&apikey=${KEY_AV}`;
+  const j = await getJSON(url);
+  const q = j["Global Quote"] || {};
+  const price = Number(q["05. price"]);
+  const pc = Number(q["08. previous close"]);
+  return {
+    price: Number.isFinite(price) ? price : 0,
+    previous_close: Number.isFinite(pc) ? pc : 0,
+  };
+}
+
+async function avFetchSeries(sym, output = 30) {
+  if (!USE_AV) throw new Error("Alpha Vantage key missing");
+  const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${encodeURIComponent(sym)}&apikey=${KEY_AV}`;
+  const j = await getJSON(url);
+  const series = j["Time Series (Daily)"] || {};
+  const dates = Object.keys(series).sort();
+  const last = dates.slice(-output);
+  const values = last.map(d => ({
+    datetime: d,
+    close: String(series[d]["4. close"]),
+  }));
+  return { values };
+}
+
+// --------------- Resolve with per-symbol fallback ---------------
+async function resolveQuote(sym) {
+  const SYM = (sym || "").toUpperCase().trim();
+  const cacheKey = `quote:${SYM}`;
+  const cached = readCache(mem.quotes, cacheKey);
+  if (cached) return cached;
+
+  try {
+    let data = null;
+
+    if (USE_FH) {
+      try {
+        data = await fhFetchQuote(SYM);
+        if (USE_AV && (!data || (!data.price && !data.previous_close))) {
+          const av = await avFetchQuote(SYM);
+          if (av && (av.price || av.previous_close)) data = av;
+        }
+      } catch (e) {
+        if (USE_AV) {
+          try { data = await avFetchQuote(SYM); } catch {}
+        }
+        if (!data) throw e;
+      }
+    } else if (USE_AV) {
+      data = await avFetchQuote(SYM);
+    } else {
+      const mock = await loadMock();
+      data = mock.quote(SYM);
+    }
+
+    data = {
+      price: Number(data?.price) || 0,
+      previous_close: Number(data?.previous_close) || 0,
+    };
+    writeCache(mem.quotes, cacheKey, data, QUOTE_TTL_MS);
+    return data;
+  } catch (e) {
+    setError(e?.message || e);
+    if (String(apiState.lastError).toLowerCase().includes("invalid api key")) apiState.invalidKey = true;
+    if (cached) return cached;
+    const mock = await loadMock();
+    return mock.quote(SYM);
   }
-  return data;
+}
+
+async function resolveSeries(sym, interval = "1day", output = 30) {
+  const SYM = (sym || "").toUpperCase().trim();
+  const key = `series:${SYM}|${interval}|${output}`;
+  const cached = readCache(mem.series, key);
+  if (cached) return cached;
+
+  try {
+    let data = null;
+
+    if (USE_FH) {
+      try {
+        data = await fhFetchSeries(SYM, output);
+        const empty = !data || !Array.isArray(data.values) || data.values.length === 0;
+        if (USE_AV && empty) {
+          const av = await avFetchSeries(SYM, output);
+          if (av && Array.isArray(av.values) && av.values.length) data = av;
+        }
+      } catch (e) {
+        if (USE_AV) {
+          try { data = await avFetchSeries(SYM, output); } catch {}
+        }
+        if (!data) throw e;
+      }
+    } else if (USE_AV) {
+      data = await avFetchSeries(SYM, output);
+    } else {
+      const mock = await loadMock();
+      data = mock.series(SYM, output);
+    }
+
+    const safe = {
+      values: Array.isArray(data?.values)
+        ? data.values
+            .map(v => ({
+              datetime: String(v.datetime || ""),
+              close: String(Number(v.close) || 0),
+            }))
+            .filter(v => v.datetime)
+        : [],
+    };
+    writeCache(mem.series, key, safe, SERIES_TTL_MS);
+    return safe;
+  } catch (e) {
+    setError(e?.message || e);
+    if (String(apiState.lastError).toLowerCase().includes("invalid api key")) apiState.invalidKey = true;
+    if (cached) return cached;
+    const mock = await loadMock();
+    return mock.series(SYM, output);
+  }
+}
+
+// Optional one-time validation
+let validated = false;
+async function validateKeyOnce() {
+  if (validated) return;
+  validated = true;
+  try {
+    if (USE_FH) { await fhFetchQuote("AAPL"); }
+    else if (USE_AV) { await avFetchQuote("AAPL"); }
+  } catch (e) {
+    setError(e?.message || e);
+    if (String(apiState.lastError).toLowerCase().includes("invalid api key")) apiState.invalidKey = true;
+  }
 }
 
 export async function fetchQuote(symbol) {
-  const normalized = String(symbol || "").toUpperCase().trim();
-  if (!normalized) {
-    return { price: 0, previous_close: 0 };
-  }
-
-  const cacheKey = buildCacheKey("quote", normalized);
-  const cached = readCache(cacheKey);
-  if (cached) {
-    return cached;
-  }
-
-  try {
-    let payload;
-    if (useMock()) {
-      payload = await fetchMockQuote(normalized);
-    } else {
-      const url = new URL(`${BASE_URL}/quote`);
-      url.searchParams.set("symbol", normalized);
-      url.searchParams.set("apikey", KEY);
-
-      const data = await getJSON(url.toString());
-      payload = {
-        price: toNumber(data.price),
-        previous_close: toNumber(data.previous_close ?? data.prev_close),
-      };
-    }
-
-    storeCache(cacheKey, payload, QUOTE_TTL);
-    return payload;
-  } catch (error) {
-    console.warn(`fetchQuote fallback for ${normalized}`, error);
-    const cachedFallback = readCache(cacheKey, { allowExpired: true });
-    if (cachedFallback) {
-      return cachedFallback;
-    }
-
-    if (!useMock()) {
-      try {
-        const mockFallback = await fetchMockQuote(normalized);
-        storeCache(cacheKey, mockFallback, QUOTE_TTL);
-        return mockFallback;
-      } catch (mockError) {
-        console.warn("fetchQuote mock fallback failed", mockError);
-      }
-    }
-
-    return { price: 0, previous_close: 0 };
-  }
+  await validateKeyOnce();
+  return resolveQuote(symbol);
 }
 
 export async function fetchSeries(symbol, interval = "1day", output = 30) {
-  const normalizedSymbol = String(symbol || "").toUpperCase().trim();
-  if (!normalizedSymbol) {
-    return { values: [] };
-  }
-
-  const safeInterval = String(interval || "1day");
-  const requestedOutput = Number(output);
-  const safeOutput =
-    Number.isInteger(requestedOutput) && requestedOutput > 0
-      ? requestedOutput
-      : 30;
-
-  const cacheId = `${normalizedSymbol}|${safeInterval}|${safeOutput}`;
-  const cacheKey = buildCacheKey("series", cacheId);
-  const cached = readCache(cacheKey);
-  if (cached) {
-    return cached;
-  }
-
-  try {
-    let payload;
-    if (useMock()) {
-      payload = await fetchMockSeries(
-        normalizedSymbol,
-        safeInterval,
-        safeOutput
-      );
-    } else {
-      const url = new URL(`${BASE_URL}/time_series`);
-      url.searchParams.set("symbol", normalizedSymbol);
-      url.searchParams.set("interval", safeInterval);
-      url.searchParams.set("output", String(safeOutput));
-      url.searchParams.set("apikey", KEY);
-
-      const data = await getJSON(url.toString());
-      const rawValues = Array.isArray(data.values) ? data.values : [];
-      const values = [];
-
-      for (const point of rawValues) {
-        if (values.length >= safeOutput) {
-          break;
-        }
-        const closeNumber = Number(point.close);
-        if (!Number.isFinite(closeNumber)) {
-          continue;
-        }
-        const datetime = point.datetime ?? "";
-        if (!datetime) {
-          continue;
-        }
-        values.push({
-          datetime,
-          close: closeNumber.toString(),
-        });
-      }
-
-      payload = { values };
-    }
-
-    storeCache(cacheKey, payload, SERIES_TTL);
-    return payload;
-  } catch (error) {
-    console.warn(`fetchSeries fallback for ${normalizedSymbol}`, error);
-    const cachedFallback = readCache(cacheKey, { allowExpired: true });
-    if (cachedFallback) {
-      return cachedFallback;
-    }
-
-    if (!useMock()) {
-      try {
-        const mockFallback = await fetchMockSeries(
-          normalizedSymbol,
-          safeInterval,
-          safeOutput
-        );
-        storeCache(cacheKey, mockFallback, SERIES_TTL);
-        return mockFallback;
-      } catch (mockError) {
-        console.warn("fetchSeries mock fallback failed", mockError);
-      }
-    }
-
-    return { values: [] };
-  }
+  await validateKeyOnce();
+  return resolveSeries(symbol, interval, output);
 }
