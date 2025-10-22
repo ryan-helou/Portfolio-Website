@@ -1,16 +1,16 @@
-# React + Vite
+# Portfolio Tracker (Mock)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A minimal holdings tracker built with Vite + React. The current version uses mock data and a lightweight API layer that you can later replace with real Twelve Data endpoints.
 
-Currently, two official plugins are available:
+## Getting Started
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- `npm i`
+- `npm run dev`
 
-## React Compiler
+The UI persists holdings to `localStorage`, so changes survive a browser refresh.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Swapping to the Twelve Data API
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+- Add a `.env` file in the project root with `VITE_TWELVEDATA_KEY=YOUR_KEY`.
+- Update the fetch logic inside `src/api/twelve.js` to call the real `/quote` and `/time_series` endpoints using `import.meta.env.VITE_TWELVEDATA_KEY`.
+- Remove or adjust the mock exports defined in `src/mock.js` once live data is wired up.
