@@ -1,4 +1,4 @@
-const currencyFormatter = new Intl.NumberFormat("en-US", {
+﻿const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
   minimumFractionDigits: 2,
@@ -34,7 +34,7 @@ export default function MetricsBar({ value, change }) {
       <article className="kpi" role="status" aria-live="polite">
         <span className="kpi__label">Portfolio Value</span>
         <span className="kpi__value">{formattedValue}</span>
-        <span className={deltaClass}>
+        <span className={deltaClass} aria-live="polite">
           <span aria-hidden="true">{caret}</span>
           <span>{formattedChange}</span>
         </span>
@@ -43,7 +43,7 @@ export default function MetricsBar({ value, change }) {
       <article className="kpi" role="status" aria-live="polite">
         <span className="kpi__label">Today&apos;s Change</span>
         <span className="kpi__value">{formattedChange}</span>
-        <span className={deltaClass}>
+        <span className={deltaClass} aria-live="polite">
           <span aria-hidden="true">{caret}</span>
           <span>{formattedPercent}</span>
         </span>

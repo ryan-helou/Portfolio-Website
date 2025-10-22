@@ -1,4 +1,4 @@
-const currencyFormatter = new Intl.NumberFormat("en-US", {
+﻿const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
   minimumFractionDigits: 2,
@@ -63,7 +63,7 @@ export default function HoldingsTable({
     return (
       <tr
         key={sym}
-        className={isSelected ? "selected-row" : ""}
+        className={isSelected ? "is-selected" : ""}
         onClick={() => onSelect(sym)}
         aria-selected={isSelected}
       >
@@ -74,7 +74,7 @@ export default function HoldingsTable({
         <td data-align="right">
           <button
             type="button"
-            className="btn btn--ghost btn--icon"
+            className="btn btn--icon"
             aria-label={`Remove ${sym}`}
             onClick={(event) => {
               event.stopPropagation();

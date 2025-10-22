@@ -1,4 +1,4 @@
-import {
+ï»¿import {
   useCallback,
   useEffect,
   useMemo,
@@ -121,9 +121,9 @@ function App() {
 
   let keyNotice = "";
   if (!hasFinnhubKey && !hasAlphaKey) {
-    keyNotice = "API keys not set — using mock data.";
+    keyNotice = "API keys not set \u2014 using mock data.";
   } else if (!hasFinnhubKey || apiStatus.invalidKey) {
-    keyNotice = "Finnhub key missing/invalid — using mock data.";
+    keyNotice = "Finnhub key missing/invalid \u2014 using mock data.";
   }
 
   const errorActive =
@@ -554,83 +554,87 @@ function App() {
   return (
     <>
       <div className="container">
-        {keyNotice ? (
-          <div className="banner" role="status" aria-live="polite">
-            {keyNotice}
-          </div>
-        ) : null}
-
-        {errorActive ? (
-          <div className="banner banner--error" role="status" aria-live="polite">
-            {`Live data error: ${apiStatus.lastError}. Showing cached or mock values.`}
-          </div>
-        ) : null}
-
-        <header className="card top-bar">
+        <div className="top-bar">
           <h1 className="top-bar__title">My Portfolio</h1>
-          <button
-            type="button"
-            className="btn btn--ghost btn--icon theme-toggle"
-            onClick={handleToggleTheme}
-            aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
-          >
-            <span aria-hidden="true">{isDark ? "Light" : "Dark"}</span>
-          </button>
-        </header>
-
-        <section className="card fade-in" aria-label="Portfolio metrics">
-          <MetricsBar value={portfolioValue} change={todayChange} />
-        </section>
-
-        <section className="card fade-in" aria-label="Add holding">
-          <h2>Add Holding</h2>
-          <HoldingsForm onAdd={handleAddHolding} />
-        </section>
-
-        <section className="card fade-in" aria-label="Holdings table">
-          <div className="card-header">
-            <h2>Holdings</h2>
-            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-              <button
-                type="button"
-                className="btn btn--ghost"
-                onClick={handleRefresh}
-                disabled={isLoadingQuotes}
-                aria-label="Refresh quotes"
-              >
-                {isLoadingQuotes ? "Refreshing..." : "Refresh"}
-              </button>
-              <button
-                type="button"
-                className="btn btn--ghost"
-                onClick={handleForceRefresh}
-                aria-label="Force refresh all symbols"
-              >
-                Force Refresh
-              </button>
-            </div>
+          <div className="top-bar__actions">
+            <button
+              type="button"
+              className="btn btn--ghost btn--icon theme-toggle"
+              onClick={handleToggleTheme}
+              aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
+            >
+              <span aria-hidden="true">{isDark ? "Light" : "Dark"}</span>
+            </button>
           </div>
-          <HoldingsTable
-            holdings={holdings}
-            prices={prices}
-            onRemove={handleRemoveHolding}
-            onSelect={(symbol) => setSelected(normalizeSymbol(symbol))}
-            selectedSymbol={selected}
-            errorActive={errorActive}
-          />
-        </section>
+        </div>
 
-        <section className="card fade-in" aria-label="Performance chart">
-          <h2>Performance</h2>
-          <StockChart symbol={selected} />
-        </section>
+        <div className="app-shell">
+          {keyNotice ? (
+            <div className="banner" role="status" aria-live="polite">
+              {keyNotice}
+            </div>
+          ) : null}
 
-        {import.meta.env.DEV && diagnostics ? (
-          <details className="diagnostics">
-            <summary>Diagnostics</summary>
-            <pre>{JSON.stringify(diagnostics, null, 2)}</pre>
-          </details>
-        ) : null}
+          {errorActive ? (
+            <div className="banner banner--error" role="status" aria-live="polite">
+              {`Live data error: ${apiStatus.lastError}. Showing cached or mock values.`}
+            </div>
+          ) : null}
+
+          <section className="card fade-in" aria-label="Portfolio metrics">
+            <MetricsBar value={portfolioValue} change={todayChange} />
+          </section>
+
+          <section className="card fade-in" aria-label="Add holding">
+            <h2 className="card__title">Add Holding</h2>
+            <HoldingsForm onAdd={handleAddHolding} />
+          </section>
+
+          <section className="card fade-in" aria-label="Holdings table">
+            <div className="card-header">
+              <h2 className="card__title">Holdings</h2>
+              <div className="btn-group">
+                <button
+                  type="button"
+                  className="btn btn--ghost"
+                  onClick={handleRefresh}
+                  disabled={isLoadingQuotes}
+                  aria-label="Refresh quotes"
+                >
+                  {isLoadingQuotes ? "Refreshing..." : "Refresh"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--ghost"
+                  onClick={handleForceRefresh}
+                  aria-label="Force refresh all symbols"
+                >
+                  Force Refresh
+                </button>
+              </div>
+            </div>
+            <HoldingsTable
+              holdings={holdings}
+              prices={prices}
+              onRemove={handleRemoveHolding}
+              onSelect={(symbol) => setSelected(normalizeSymbol(symbol))}
+              selectedSymbol={selected}
+              errorActive={errorActive}
+            />
+          </section>
+
+          <section className="card fade-in" aria-label="Performance chart">
+            <h2 className="card__title">Performance</h2>
+            <StockChart symbol={selected} />
+          </section>
+
+          {import.meta.env.DEV && diagnostics ? (
+            <details className="diagnostics">
+              <summary>Diagnostics</summary>
+              <pre>{JSON.stringify(diagnostics, null, 2)}</pre>
+            </details>
+          ) : null}
+        </div>
       </div>
 
       {toast ? (
