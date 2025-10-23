@@ -78,6 +78,7 @@ function App() {
   const [holdings, setHoldings] = useState([]);
   const [prices, setPrices] = useState({});
   const [prevs, setPrevs] = useState({});
+  const [changePercents, setChangePercents] = useState({});
   const [selected, setSelected] = useState(null);
   const [portfolioKey, setPortfolioKey] = useState(() => {
     if (typeof window === "undefined") {
@@ -332,6 +333,7 @@ function App() {
       if (!cancelled) {
         setPrices({});
         setPrevs({});
+        setChangePercents({});
         setIsLoadingQuotes(false);
       }
       return () => {
@@ -342,6 +344,7 @@ function App() {
     if (typeof window !== "undefined") {
       const cachedPrices = {};
       const cachedPrevs = {};
+      const cachedChangePercents = {};
       symbols.forEach((sym) => {
         const cached = readCachedQuote(sym);
         if (cached) {
@@ -351,6 +354,7 @@ function App() {
           );
           cachedPrices[sym] = resolved.price;
           cachedPrevs[sym] = resolved.previous;
+          cachedChangePercents[sym] = cached.change_percent ?? null;
         }
       });
       if (!cancelled) {
@@ -359,6 +363,9 @@ function App() {
         }
         if (Object.keys(cachedPrevs).length > 0) {
           setPrevs((prev) => ({ ...prev, ...cachedPrevs }));
+        }
+        if (Object.keys(cachedChangePercents).length > 0) {
+          setChangePercents((prev) => ({ ...prev, ...cachedChangePercents }));
         }
       }
     }
@@ -399,6 +406,7 @@ function App() {
           if (!cancelled) {
             setPrices((prev) => ({ ...prev, [symbol]: resolved.price }));
             setPrevs((prev) => ({ ...prev, [symbol]: resolved.previous }));
+            setChangePercents((prev) => ({ ...prev, [symbol]: entry.data.change_percent ?? null }));
           }
           continue;
         }
@@ -414,6 +422,7 @@ function App() {
           );
           setPrices((prev) => ({ ...prev, [symbol]: resolved.price }));
           setPrevs((prev) => ({ ...prev, [symbol]: resolved.previous }));
+          setChangePercents((prev) => ({ ...prev, [symbol]: quote?.change_percent ?? null }));
         } catch (error) {
           const fallbackPrice = pricesRef.current[symbol];
           const fallbackPrev = prevsRef.current[symbol];
@@ -426,6 +435,7 @@ function App() {
               ...prev,
               [symbol]: typeof fallbackPrev === "number" ? fallbackPrev : 0,
             }));
+            setChangePercents((prev) => ({ ...prev, [symbol]: null }));
           }
         }
       }
@@ -735,6 +745,7 @@ function App() {
                   {
                     price: prices[sym] ?? 0,
                     prevClose: prevs[sym] ?? 0,
+                    changePercent: changePercents[sym] ?? null,
                   },
                 ])
               )}

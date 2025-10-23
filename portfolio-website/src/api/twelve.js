@@ -120,7 +120,8 @@ async function msFetchQuote(sym) {
   // SHOP.TO becomes SHOP.XTSE
   const marketstackSym = sym.replace(".TO", ".XTSE");
   console.log(`[API] Marketstack requesting: ${marketstackSym}`);
-  const url = `http://api.marketstack.com/v1/eod/latest?access_key=${KEY_MS}&symbols=${encodeURIComponent(marketstackSym)}`;
+  // Fetch last 2 days to get both current and previous close
+  const url = `http://api.marketstack.com/v1/eod?access_key=${KEY_MS}&symbols=${encodeURIComponent(marketstackSym)}&limit=2`;
   const j = await getJSON(url);
 
   console.log(`[API] Marketstack full response for ${marketstackSym}:`, JSON.stringify(j));
@@ -134,14 +135,25 @@ async function msFetchQuote(sym) {
     throw new Error(`Symbol ${sym} not found on Marketstack - empty data array`);
   }
 
-  const q = j.data[0];
-  console.log(`[API] Marketstack quote data:`, JSON.stringify(q));
-  const price = Number(q.close);
-  // Marketstack doesn't have previous_close in latest endpoint, calculate from open
-  const pc = Number(q.open);
+  // Marketstack returns newest first, so [0] = today, [1] = yesterday
+  const today = j.data[0];
+  const yesterday = j.data[1];
+
+  console.log(`[API] Marketstack today:`, JSON.stringify(today));
+  console.log(`[API] Marketstack yesterday:`, JSON.stringify(yesterday));
+
+  const price = Number(today.close);
+  const open = Number(today.open);
+  // Use yesterday's close as previous_close
+  const pc = yesterday ? Number(yesterday.close) : open;
+
+  // Calculate change percent: (close - previous_close) / previous_close * 100
+  const changePercent = pc > 0 ? ((price - pc) / pc) * 100 : null;
+
   return {
     price: Number.isFinite(price) ? price : 0,
     previous_close: Number.isFinite(pc) ? pc : 0,
+    change_percent: Number.isFinite(changePercent) ? changePercent : null,
   };
 }
 
@@ -177,9 +189,11 @@ async function fhFetchQuote(sym) {
   const j = await getJSON(url);
   const price = Number(j.c);
   const pc = Number(j.pc);
+  const changePercent = Number(j.dp); // Finnhub provides "dp" = change percent
   return {
     price: Number.isFinite(price) ? price : 0,
     previous_close: Number.isFinite(pc) ? pc : 0,
+    change_percent: Number.isFinite(changePercent) ? changePercent : null,
   };
 }
 
@@ -216,9 +230,11 @@ async function avFetchQuote(sym) {
   }
   const price = Number(q["05. price"]);
   const pc = Number(q["08. previous close"]);
+  const changePercent = Number(q["10. change percent"]?.replace('%', '')); // Alpha Vantage provides "10. change percent" as "1.23%"
   return {
     price: Number.isFinite(price) ? price : 0,
     previous_close: Number.isFinite(pc) ? pc : 0,
+    change_percent: Number.isFinite(changePercent) ? changePercent : null,
   };
 }
 
@@ -329,6 +345,7 @@ async function resolveQuote(sym) {
     data = {
       price: Number(data?.price) || 0,
       previous_close: Number(data?.previous_close) || 0,
+      change_percent: data?.change_percent ?? null,
     };
     writeCache(mem.quotes, cacheKey, data, QUOTE_TTL_MS);
     return data;

@@ -156,6 +156,8 @@ a {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
   padding: 24px clamp(24px, 5vw, 40px);
   background: var(--bg-elev);
   border-bottom: 1px solid var(--border);

@@ -39,10 +39,11 @@ export default function HoldingsTable({
         })
       : "--";
 
-    // Price extraction - support both shapes: { SYMBOL: number } or { SYMBOL: { price, prevClose } }
+    // Price extraction - support both shapes: { SYMBOL: number } or { SYMBOL: { price, prevClose, changePercent } }
     const rawEntry = prices ? prices[sym] : undefined;
     let priceNumber = 0;
     let prevClose = null;
+    let changePercent = null;
 
     if (rawEntry === undefined) {
       // fallback to keyed prev-close style (e.g. prices["AAPL-prevClose"]) or numeric mapping
@@ -57,6 +58,7 @@ export default function HoldingsTable({
       priceNumber = Number(rawEntry.price ?? rawEntry.currentPrice ?? 0);
       prevClose = Number(rawEntry.prevClose ?? rawEntry.previousClose ?? NaN);
       if (!Number.isFinite(prevClose)) prevClose = null;
+      changePercent = rawEntry.changePercent ?? null;
     }
 
     const hasPrice = Number.isFinite(priceNumber) && priceNumber !== 0;
@@ -76,8 +78,10 @@ export default function HoldingsTable({
         ? DASH
         : "--";
 
-    // Calculate daily percent change when prevClose is available
-    const dailyChangePct = prevClose
+    // Use changePercent from API if available, otherwise calculate from prevClose
+    const dailyChangePct = changePercent !== null && Number.isFinite(changePercent)
+      ? changePercent
+      : prevClose
       ? ((priceNumber - prevClose) / prevClose) * 100
       : null;
     const formattedChange =
