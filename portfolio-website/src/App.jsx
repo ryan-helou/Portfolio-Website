@@ -1,14 +1,8 @@
-﻿import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import ThemeToggle from "./components/ThemeToggle";
 import HoldingsForm from "./components/HoldingsForm";
 import HoldingsTable from "./components/HoldingsTable";
 import MetricsBar from "./components/MetricsBar";
-import StockChart from "./components/StockChart";
 import { initialHoldings } from "./mock";
 import { apiState, fetchQuote } from "./api/twelve";
 
@@ -31,7 +25,8 @@ function resolveQuoteValues(priceValue, previousValue) {
   const resolvedPrice = safeNumber(priceValue);
   const resolvedPrev = safeNumber(previousValue);
   return {
-    price: resolvedPrice === 0 && resolvedPrev > 0 ? resolvedPrev : resolvedPrice,
+    price:
+      resolvedPrice === 0 && resolvedPrev > 0 ? resolvedPrev : resolvedPrice,
     previous: resolvedPrev,
   };
 }
@@ -91,7 +86,9 @@ function App() {
     if (stored === "light") {
       return false;
     }
-    return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false;
+    return (
+      window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false
+    );
   });
   const [refreshTick, setRefreshTick] = useState(0);
   const [isLoadingQuotes, setIsLoadingQuotes] = useState(false);
@@ -488,18 +485,15 @@ function App() {
     setIsDark((prev) => !prev);
   }, []);
 
-  const requestRefresh = useCallback(
-    (force = false) => {
-      const now = Date.now();
-      if (!force && now - refreshCooldownRef.current < REFRESH_COOLDOWN) {
-        return;
-      }
-      refreshCooldownRef.current = now;
-      refreshMetaRef.current = { force };
-      setRefreshTick((tick) => tick + 1);
-    },
-    []
-  );
+  const requestRefresh = useCallback((force = false) => {
+    const now = Date.now();
+    if (!force && now - refreshCooldownRef.current < REFRESH_COOLDOWN) {
+      return;
+    }
+    refreshCooldownRef.current = now;
+    refreshMetaRef.current = { force };
+    setRefreshTick((tick) => tick + 1);
+  }, []);
 
   const handleRefresh = useCallback(() => {
     requestRefresh(false);
@@ -557,14 +551,7 @@ function App() {
         <div className="top-bar">
           <h1 className="top-bar__title">My Portfolio</h1>
           <div className="top-bar__actions">
-            <button
-              type="button"
-              className="btn btn--ghost btn--icon theme-toggle"
-              onClick={handleToggleTheme}
-              aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
-            >
-              <span aria-hidden="true">{isDark ? "Light" : "Dark"}</span>
-            </button>
+            <ThemeToggle isDark={isDark} onChange={handleToggleTheme} />
           </div>
         </div>
 
@@ -576,7 +563,11 @@ function App() {
           ) : null}
 
           {errorActive ? (
-            <div className="banner banner--error" role="status" aria-live="polite">
+            <div
+              className="banner banner--error"
+              role="status"
+              aria-live="polite"
+            >
               {`Live data error: ${apiStatus.lastError}. Showing cached or mock values.`}
             </div>
           ) : null}
@@ -603,14 +594,6 @@ function App() {
                 >
                   {isLoadingQuotes ? "Refreshing..." : "Refresh"}
                 </button>
-                <button
-                  type="button"
-                  className="btn btn--ghost"
-                  onClick={handleForceRefresh}
-                  aria-label="Force refresh all symbols"
-                >
-                  Force Refresh
-                </button>
               </div>
             </div>
             <HoldingsTable
@@ -621,11 +604,6 @@ function App() {
               selectedSymbol={selected}
               errorActive={errorActive}
             />
-          </section>
-
-          <section className="card fade-in" aria-label="Performance chart">
-            <h2 className="card__title">Performance</h2>
-            <StockChart symbol={selected} />
           </section>
 
           {import.meta.env.DEV && diagnostics ? (

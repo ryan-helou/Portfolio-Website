@@ -18,8 +18,24 @@
   --radius-md: 14px;
   --radius-lg: 18px;
   --transition: all 0.16s ease;
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
-    Roboto, Ubuntu, "Helvetica Neue", sans-serif;
+  --font-display: "Sora", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Space Grotesk", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  
+  /* Typography Scale */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 2rem;
+  --text-4xl: 2.5rem;
+  
+  /* Letter Spacing */
+  --tracking-tight: -0.015em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.025em;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -77,6 +93,8 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   font-size: 16px;
+  letter-spacing: var(--tracking-normal);
+  line-height: 1.5;
 }
 
 img,
@@ -152,9 +170,14 @@ a {
 
 .top-bar__title {
   margin: 0;
+  font-family: var(--font-display);
   font-size: clamp(26px, 4vw, 32px);
   font-weight: 600;
-  letter-spacing: 0.02em;
+  letter-spacing: var(--tracking-tight);
+  background: linear-gradient(to right, var(--card-contrast), var(--accent));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 .top-bar__actions {
@@ -184,11 +207,25 @@ a {
 
 .card__title {
   margin: 0;
-  font-size: 18px;
+  font-family: var(--font-display);
+  font-size: var(--text-sm);
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
   color: var(--text-muted);
+  position: relative;
+  display: inline-block;
+}
+
+.card__title::after {
+  content: "";
+  position: absolute;
+  bottom: -4px;
+  left: 0;
+  width: 2rem;
+  height: 2px;
+  background: var(--accent);
+  opacity: 0.5;
 }
 
 h1,
@@ -211,7 +248,8 @@ h4 {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 12px 18px;
+  height: 42px;
+  padding: 0 18px;
   border-radius: 12px;
   border: 1px solid transparent;
   background: transparent;
@@ -221,6 +259,7 @@ h4 {
   letter-spacing: 0.015em;
   cursor: pointer;
   transition: var(--transition);
+  white-space: nowrap;
 }
 
 .btn:hover:not(:disabled) {
@@ -247,6 +286,7 @@ h4 {
   background: var(--card-contrast);
   color: var(--accent-contrast);
   border-color: rgba(15, 16, 19, 0.8);
+  margin-top: 2px;
 }
 
 .btn--primary:hover:not(:disabled) {
@@ -262,6 +302,56 @@ h4 {
 .btn--ghost:hover:not(:disabled) {
   background: rgba(118, 120, 129, 0.14);
   border-color: rgba(108, 110, 120, 0.48);
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 99px;
+  border: 1px solid rgba(108, 110, 120, 0.25);
+  background: rgba(112, 114, 123, 0.04);
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.theme-toggle:hover {
+  background: rgba(112, 114, 123, 0.08);
+  border-color: rgba(108, 110, 120, 0.35);
+  transform: translateY(-1px);
+}
+
+.theme-toggle:active {
+  transform: translateY(1px);
+}
+
+.theme-toggle__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  transition: transform 0.3s ease;
+}
+
+.theme-toggle:hover .theme-toggle__icon {
+  transform: rotate(12deg) scale(1.1);
+}
+
+.theme-toggle__label {
+  position: relative;
+  transition: opacity 0.2s ease;
+}
+
+.theme-toggle:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--ring-offset);
 }
 
 .btn--icon {
@@ -288,13 +378,15 @@ h4 {
 
 .input {
   width: 100%;
-  padding: 12px 16px;
+  height: 42px;
+  padding: 0 16px;
   border-radius: 12px;
   border: 1px solid rgba(112, 115, 123, 0.35);
   background: rgba(255, 255, 255, 0.72);
   box-shadow: inset 0 0 0 1px rgba(112, 115, 123, 0.08);
   color: var(--text);
   transition: var(--transition);
+  margin-top: 6px;
 }
 
 .theme-dark .input {
@@ -319,8 +411,31 @@ h4 {
 
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 20px;
+  grid-template-columns: minmax(180px, 1fr) minmax(140px, 1fr) auto;
+  gap: 24px;
+  align-items: start;
+}
+
+.form-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.form-grid > div:last-child {
+  margin-top:36px;
+}
+
+.form-grid .helper {
+  margin-top: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+@media (max-width: 768px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .helper {
@@ -361,10 +476,12 @@ h4 {
 }
 
 .kpi__value {
+  font-family: var(--font-mono);
   font-size: clamp(28px, 4vw, 32px);
   font-weight: 600;
   color: var(--card-contrast);
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
 }
 
 .kpi__delta {
@@ -410,7 +527,7 @@ h4 {
 
 .table thead th {
   text-align: left;
-  padding: 14px 16px;
+  padding: 14px 24px;
   background: rgba(244, 244, 246, 0.92);
   color: var(--text-muted);
   font-weight: 600;
@@ -418,6 +535,10 @@ h4 {
   text-transform: uppercase;
   font-size: 12px;
   border-bottom: 1px solid rgba(112, 114, 123, 0.18);
+}
+
+.table thead th:not(:first-child) {
+  text-align: right;
 }
 
 .theme-dark .table thead th {
@@ -440,18 +561,53 @@ h4 {
 }
 
 .table td {
-  padding: 16px;
+  padding: 16px 24px;
   border-bottom: 1px solid rgba(112, 114, 123, 0.15);
   color: var(--text);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
+  letter-spacing: -0.01em;
 }
 
 .table td[data-align="right"] {
   text-align: right;
+  font-feature-settings: "tnum";
+}
+
+/* Symbol column specific width */
+.table th:first-child,
+.table td:first-child {
+  width: 120px;
+}
+
+/* Shares column specific width */
+.table th:nth-child(2),
+.table td:nth-child(2) {
+  width: 100px;
+}
+
+/* Price column specific width */
+.table th:nth-child(3),
+.table td:nth-child(3) {
+  width: 120px;
+}
+
+/* Value column specific width */
+.table th:nth-child(4),
+.table td:nth-child(4) {
+  width: 120px;
+}
+
+/* Actions column */
+.table th:last-child,
+.table td:last-child {
+  width: 80px;
+  text-align: center;
+  padding: 16px 12px;
 }
 
 .empty {
