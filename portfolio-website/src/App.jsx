@@ -3,14 +3,18 @@ import ThemeToggle from "./components/ThemeToggle";
 import HoldingsForm from "./components/HoldingsForm";
 import HoldingsTable from "./components/HoldingsTable";
 import MetricsBar from "./components/MetricsBar";
+import PortfolioKeyManager from "./components/PortfolioKeyManager";
+import ConfirmModal from "./components/ConfirmModal";
 import { initialHoldings } from "./mock";
 import { apiState, fetchQuote } from "./api/twelve";
+import { savePortfolio, loadPortfolio, checkKeyExists } from "./lib/supabase";
 
 const STORAGE_KEY = "portfolio-holdings";
 const THEME_KEY = "theme";
+const PORTFOLIO_KEY_STORAGE = "portfolio-key";
 const REFRESH_COOLDOWN = 1500;
 const ERROR_WINDOW_MS = 15_000;
-const FRESH_MS = 60 * 1000;
+const FRESH_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function normalizeSymbol(symbol) {
   return (symbol || "").toUpperCase().trim();
@@ -75,6 +79,12 @@ function App() {
   const [prices, setPrices] = useState({});
   const [prevs, setPrevs] = useState({});
   const [selected, setSelected] = useState(null);
+  const [portfolioKey, setPortfolioKey] = useState(() => {
+    if (typeof window === "undefined") {
+      return "";
+    }
+    return window.localStorage.getItem(PORTFOLIO_KEY_STORAGE) || "";
+  });
   const [isDark, setIsDark] = useState(() => {
     if (typeof window === "undefined") {
       return false;
@@ -90,6 +100,18 @@ function App() {
       window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false
     );
   });
+
+  // Set initial theme class on mount
+  useEffect(() => {
+    const root = document.documentElement;
+    if (isDark) {
+      root.classList.add("theme-dark");
+      root.classList.remove("theme-light");
+    } else {
+      root.classList.remove("theme-dark");
+      root.classList.add("theme-light");
+    }
+  }, []);
   const [refreshTick, setRefreshTick] = useState(0);
   const [isLoadingQuotes, setIsLoadingQuotes] = useState(false);
   const [toast, setToast] = useState("");
@@ -97,6 +119,14 @@ function App() {
     lastError: apiState.lastError,
     lastErrorAt: apiState.lastErrorAt,
     invalidKey: apiState.invalidKey,
+  });
+  const [modalState, setModalState] = useState({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: null,
+    confirmText: "Confirm",
+    cancelText: "Cancel",
   });
 
   const toastTimerRef = useRef(null);
@@ -254,7 +284,7 @@ function App() {
     if (storedHoldings) {
       try {
         const parsed = JSON.parse(storedHoldings);
-        if (Array.isArray(parsed) && parsed.length > 0) {
+        if (Array.isArray(parsed)) {
           applyHoldings(parsed, storedSelected);
           return;
         }
@@ -270,8 +300,10 @@ function App() {
     const root = document.documentElement;
     if (isDark) {
       root.classList.add("theme-dark");
+      root.classList.remove("theme-light");
     } else {
       root.classList.remove("theme-dark");
+      root.classList.add("theme-light");
     }
 
     if (typeof window !== "undefined") {
@@ -503,6 +535,100 @@ function App() {
     requestRefresh(true);
   }, [requestRefresh]);
 
+  const handleSavePortfolio = useCallback(async (key) => {
+    try {
+      const exists = await checkKeyExists(key);
+
+      if (exists) {
+        // Key exists, show modal to ask user if they want to overwrite
+        return new Promise((resolve, reject) => {
+          setModalState({
+            isOpen: true,
+            title: "Key Already Exists",
+            message: `Portfolio key "${key}" already exists. Do you want to overwrite it with your current holdings?`,
+            confirmText: "Overwrite",
+            cancelText: "Cancel",
+            onConfirm: async () => {
+              setModalState((prev) => ({ ...prev, isOpen: false }));
+              try {
+                const result = await savePortfolio(key, holdings);
+                setPortfolioKey(key);
+                if (typeof window !== "undefined") {
+                  window.localStorage.setItem(PORTFOLIO_KEY_STORAGE, key);
+                }
+                showToast(result.message);
+                resolve();
+              } catch (error) {
+                showToast(error.message || 'Failed to save portfolio');
+                reject(error);
+              }
+            },
+          });
+        });
+      }
+
+      const result = await savePortfolio(key, holdings);
+
+      // Update local state
+      setPortfolioKey(key);
+
+      // Persist key to localStorage
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(PORTFOLIO_KEY_STORAGE, key);
+      }
+
+      showToast(result.message);
+    } catch (error) {
+      showToast(error.message || 'Failed to save portfolio');
+      throw error;
+    }
+  }, [holdings, showToast]);
+
+  const handleLoadPortfolio = useCallback(async (key) => {
+    try {
+      const result = await loadPortfolio(key);
+
+      if (!result.success) {
+        // Key doesn't exist, show modal to ask if user wants to create it
+        return new Promise((resolve, reject) => {
+          setModalState({
+            isOpen: true,
+            title: "Key Not Found",
+            message: `Portfolio key "${key}" not found. Do you want to create a new portfolio with this key?`,
+            confirmText: "Create",
+            cancelText: "Cancel",
+            onConfirm: async () => {
+              setModalState((prev) => ({ ...prev, isOpen: false }));
+              try {
+                await handleSavePortfolio(key);
+                resolve();
+              } catch (error) {
+                reject(error);
+              }
+            },
+          });
+        });
+      }
+
+      // Load holdings from database
+      const loadedHoldings = result.data.holdings || [];
+      setHoldings(loadedHoldings);
+      setPortfolioKey(key);
+
+      // Persist key to localStorage
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(PORTFOLIO_KEY_STORAGE, key);
+      }
+
+      showToast(`${result.message} (${loadedHoldings.length} stock${loadedHoldings.length !== 1 ? 's' : ''})`);
+    } catch (error) {
+      if (error.message !== 'Load cancelled') {
+        showToast(error.message || 'Failed to load portfolio');
+      }
+      throw error;
+    }
+  }, [handleSavePortfolio, showToast]);
+
   const diagnostics = useMemo(() => {
     if (!import.meta.env.DEV || typeof window === "undefined") {
       return null;
@@ -554,6 +680,12 @@ function App() {
             <MetricsBar value={portfolioValue} change={todayChange} />
           </div>
           <div className="top-bar__actions">
+            <PortfolioKeyManager
+              currentKey={portfolioKey}
+              onSave={handleSavePortfolio}
+              onLoad={handleLoadPortfolio}
+              disabled={isLoadingQuotes}
+            />
             <ThemeToggle isDark={isDark} onChange={handleToggleTheme} />
           </div>
         </div>
@@ -597,7 +729,15 @@ function App() {
             </div>
             <HoldingsTable
               holdings={holdings}
-              prices={prices}
+              prices={Object.fromEntries(
+                uniqueSymbols.map((sym) => [
+                  sym,
+                  {
+                    price: prices[sym] ?? 0,
+                    prevClose: prevs[sym] ?? 0,
+                  },
+                ])
+              )}
               onRemove={handleRemoveHolding}
               onSelect={(symbol) => setSelected(normalizeSymbol(symbol))}
               selectedSymbol={selected}
@@ -619,6 +759,16 @@ function App() {
           {toast}
         </div>
       ) : null}
+
+      <ConfirmModal
+        isOpen={modalState.isOpen}
+        title={modalState.title}
+        message={modalState.message}
+        onConfirm={modalState.onConfirm}
+        onCancel={() => setModalState((prev) => ({ ...prev, isOpen: false }))}
+        confirmText={modalState.confirmText}
+        cancelText={modalState.cancelText}
+      />
     </>
   );
 }

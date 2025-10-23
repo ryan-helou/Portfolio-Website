@@ -11,8 +11,8 @@ const KEY_AV  = import.meta.env.VITE_ALPHAVANTAGE_KEY || "";
 const USE_FH  = !!KEY_FH;
 const USE_AV  = !!KEY_AV;
 
-const QUOTE_TTL_MS  = 60 * 1000;
-const SERIES_TTL_MS = 5 * 60 * 1000;
+const QUOTE_TTL_MS  = 24 * 60 * 60 * 1000; // 24 hours
+const SERIES_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 const mem = {
   quotes: new Map(), // key -> { data, exp }

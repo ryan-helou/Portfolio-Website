@@ -1,7 +1,4 @@
-export const initialHoldings = [
-  { symbol: "AAPL", shares: 2 },
-  { symbol: "MSFT", shares: 1 },
-];
+export const initialHoldings = [];
 
 export const mockQuote = {
   AAPL: { price: 230.12, prevClose: 227.84 },
