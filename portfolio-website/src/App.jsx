@@ -549,7 +549,10 @@ function App() {
     <>
       <div className="container">
         <div className="top-bar">
-          <h1 className="top-bar__title">My Portfolio</h1>
+          <div className="top-bar__main">
+            <h1 className="top-bar__title">Portfolio</h1>
+            <MetricsBar value={portfolioValue} change={todayChange} />
+          </div>
           <div className="top-bar__actions">
             <ThemeToggle isDark={isDark} onChange={handleToggleTheme} />
           </div>
@@ -571,10 +574,6 @@ function App() {
               {`Live data error: ${apiStatus.lastError}. Showing cached or mock values.`}
             </div>
           ) : null}
-
-          <section className="card fade-in" aria-label="Portfolio metrics">
-            <MetricsBar value={portfolioValue} change={todayChange} />
-          </section>
 
           <section className="card fade-in" aria-label="Add holding">
             <h2 className="card__title">Add Holding</h2>

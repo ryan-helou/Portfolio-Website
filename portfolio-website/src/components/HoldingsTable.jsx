@@ -39,13 +39,32 @@ export default function HoldingsTable({
         })
       : "--";
 
-    const priceNumber = Number(prices[sym] ?? 0);
-    const hasPrice = Number.isFinite(priceNumber);
+    // Price extraction - support both shapes: { SYMBOL: number } or { SYMBOL: { price, prevClose } }
+    const rawEntry = prices ? prices[sym] : undefined;
+    let priceNumber = 0;
+    let prevClose = null;
+
+    if (rawEntry === undefined) {
+      // fallback to keyed prev-close style (e.g. prices["AAPL-prevClose"]) or numeric mapping
+      priceNumber = Number(prices?.[sym] ?? 0);
+      prevClose = Number(prices?.[`${sym}-prevClose`] ?? NaN);
+      if (!Number.isFinite(prevClose)) prevClose = null;
+    } else if (typeof rawEntry === "number") {
+      priceNumber = Number(rawEntry);
+      prevClose = Number(prices?.[`${sym}-prevClose`] ?? NaN);
+      if (!Number.isFinite(prevClose)) prevClose = null;
+    } else if (typeof rawEntry === "object" && rawEntry !== null) {
+      priceNumber = Number(rawEntry.price ?? rawEntry.currentPrice ?? 0);
+      prevClose = Number(rawEntry.prevClose ?? rawEntry.previousClose ?? NaN);
+      if (!Number.isFinite(prevClose)) prevClose = null;
+    }
+
+    const hasPrice = Number.isFinite(priceNumber) && priceNumber !== 0;
     const showDash = priceNumber === 0 && errorActive;
     const formattedPrice = hasPrice
-      ? showDash
-        ? DASH
-        : currencyFormatter.format(priceNumber)
+      ? currencyFormatter.format(priceNumber)
+      : showDash
+      ? DASH
       : "--";
 
     const valueNumber =
@@ -56,6 +75,25 @@ export default function HoldingsTable({
         : showDash
         ? DASH
         : "--";
+
+    // Calculate daily percent change when prevClose is available
+    const dailyChangePct = prevClose
+      ? ((priceNumber - prevClose) / prevClose) * 100
+      : null;
+    const formattedChange =
+      dailyChangePct !== null ? (
+        <span
+          className={`change-value ${
+            dailyChangePct >= 0 ? "positive" : "negative"
+          }`}
+        >
+          {(dailyChangePct > 0 ? "+" : "") + dailyChangePct.toFixed(2)}%
+        </span>
+      ) : showDash ? (
+        DASH
+      ) : (
+        "--"
+      );
 
     const isSelected =
       normalizeSymbol(selectedSymbol) === sym && sym.length > 0;
@@ -70,6 +108,7 @@ export default function HoldingsTable({
         <td>{sym}</td>
         <td data-align="right">{formattedShares}</td>
         <td data-align="right">{formattedPrice}</td>
+        <td data-align="right">{formattedChange}</td>
         <td data-align="right">{formattedValue}</td>
         <td data-align="right">
           <button
@@ -96,6 +135,7 @@ export default function HoldingsTable({
             <th scope="col">Symbol</th>
             <th scope="col">Shares</th>
             <th scope="col">Price</th>
+            <th scope="col">Today's Change</th>
             <th scope="col">Value</th>
             <th scope="col">
               <span className="sr-only">Remove holding</span>
