@@ -1,13 +1,17 @@
 // src/api/twelve.js
-// Finnhub-first with Alpha Vantage per-symbol fallback, then mocks.
+// Smart provider selection based on stock exchange:
+// - TSX stocks (.TO): Marketstack (100 calls/month, EOD data) → Alpha Vantage fallback (25 calls/day)
+// - NYSE/NASDAQ: Finnhub (60 calls/min) → Alpha Vantage fallback (25 calls/day)
 // Keeps the same exported API used by the app: fetchQuote, fetchSeries
-// - Caches in memory + localStorage (TTL: quotes 60s; series 5min)
+// - Caches in memory + localStorage (TTL: quotes 24h; series 24h)
 // - Normalizes symbols (uppercase, trim)
 // - Encodes symbols with encodeURIComponent (supports dots like AC.TO)
 // - Surfaces shared apiState for banners/toasts
 
+const KEY_MS  = import.meta.env.VITE_MARKETSTACK_KEY || "";
 const KEY_FH  = import.meta.env.VITE_FINNHUB_KEY || "";
 const KEY_AV  = import.meta.env.VITE_ALPHAVANTAGE_KEY || "";
+const USE_MS  = !!KEY_MS;
 const USE_FH  = !!KEY_FH;
 const USE_AV  = !!KEY_AV;
 
@@ -67,7 +71,17 @@ function writeCache(map, key, data, ttlMs) {
 
 async function getJSON(url) {
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    let errorMsg = `HTTP ${res.status}`;
+    try {
+      const errorBody = await res.json();
+      console.log('[API] Error response body:', JSON.stringify(errorBody));
+      if (errorBody && (errorBody.message || errorBody.error || errorBody["Error Message"])) {
+        errorMsg += `: ${errorBody.message || errorBody.error || errorBody["Error Message"]}`;
+      }
+    } catch {}
+    throw new Error(errorMsg);
+  }
   const json = await res.json();
   if ((json && json.status === "error") || json.code || json.error || json.note || json["Error Message"]) {
     const msg = json.error || json.message || json.note || json["Error Message"] || "API error";
@@ -97,6 +111,63 @@ async function loadMock() {
       };
     },
   };
+}
+
+// ---------------- Marketstack ----------------
+async function msFetchQuote(sym) {
+  if (!USE_MS) throw new Error("Marketstack key missing");
+  // Marketstack uses .XTSE suffix for Toronto Stock Exchange
+  // SHOP.TO becomes SHOP.XTSE
+  const marketstackSym = sym.replace(".TO", ".XTSE");
+  console.log(`[API] Marketstack requesting: ${marketstackSym}`);
+  const url = `http://api.marketstack.com/v1/eod/latest?access_key=${KEY_MS}&symbols=${encodeURIComponent(marketstackSym)}`;
+  const j = await getJSON(url);
+
+  console.log(`[API] Marketstack full response for ${marketstackSym}:`, JSON.stringify(j));
+
+  // Check for errors
+  if (j.error) {
+    throw new Error(JSON.stringify(j.error));
+  }
+
+  if (!j.data || !Array.isArray(j.data) || j.data.length === 0) {
+    throw new Error(`Symbol ${sym} not found on Marketstack - empty data array`);
+  }
+
+  const q = j.data[0];
+  console.log(`[API] Marketstack quote data:`, JSON.stringify(q));
+  const price = Number(q.close);
+  // Marketstack doesn't have previous_close in latest endpoint, calculate from open
+  const pc = Number(q.open);
+  return {
+    price: Number.isFinite(price) ? price : 0,
+    previous_close: Number.isFinite(pc) ? pc : 0,
+  };
+}
+
+async function msFetchSeries(sym, output = 30) {
+  if (!USE_MS) throw new Error("Marketstack key missing");
+  // Marketstack uses .XTSE suffix for Toronto Stock Exchange
+  const marketstackSym = sym.replace(".TO", ".XTSE");
+  console.log(`[API] Marketstack requesting series: ${marketstackSym}`);
+  const url = `http://api.marketstack.com/v1/eod?access_key=${KEY_MS}&symbols=${encodeURIComponent(marketstackSym)}&limit=${output}`;
+  const j = await getJSON(url);
+
+  // Check for errors
+  if (j.error) {
+    throw new Error(j.error.message || "Marketstack error");
+  }
+
+  if (!j.data || !Array.isArray(j.data) || j.data.length === 0) {
+    throw new Error(`No historical data from Marketstack for ${sym}`);
+  }
+
+  // Marketstack returns newest first, reverse it
+  const vals = j.data.reverse().map(v => ({
+    datetime: String(v.date).split('T')[0], // Extract just the date part
+    close: String(v.close),
+  }));
+  return { values: vals };
 }
 
 // ---------------- Finnhub ----------------
@@ -130,9 +201,19 @@ async function fhFetchSeries(sym, output = 30) {
 // --------------- Alpha Vantage ---------------
 async function avFetchQuote(sym) {
   if (!USE_AV) throw new Error("Alpha Vantage key missing");
+
   const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(sym)}&apikey=${KEY_AV}`;
   const j = await getJSON(url);
+
+  // Check for rate limit
+  if (j.Information || j.Note) {
+    throw new Error("Alpha Vantage rate limit exceeded (25 calls/day)");
+  }
+
   const q = j["Global Quote"] || {};
+  if (Object.keys(q).length === 0) {
+    throw new Error(`Symbol ${sym} not found on Alpha Vantage`);
+  }
   const price = Number(q["05. price"]);
   const pc = Number(q["08. previous close"]);
   return {
@@ -143,9 +224,20 @@ async function avFetchQuote(sym) {
 
 async function avFetchSeries(sym, output = 30) {
   if (!USE_AV) throw new Error("Alpha Vantage key missing");
+
   const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${encodeURIComponent(sym)}&apikey=${KEY_AV}`;
   const j = await getJSON(url);
+
+  // Check for rate limit
+  if (j.Information || j.Note) {
+    throw new Error("Alpha Vantage rate limit exceeded (25 calls/day)");
+  }
+
   const series = j["Time Series (Daily)"] || {};
+  if (Object.keys(series).length === 0) {
+    throw new Error(`No series data for ${sym}`);
+  }
+
   const dates = Object.keys(series).sort();
   const last = dates.slice(-output);
   const values = last.map(d => ({
@@ -162,27 +254,76 @@ async function resolveQuote(sym) {
   const cached = readCache(mem.quotes, cacheKey);
   if (cached) return cached;
 
+  const isTSX = SYM.endsWith(".TO");
+
   try {
     let data = null;
 
-    if (USE_FH) {
-      try {
-        data = await fhFetchQuote(SYM);
-        if (USE_AV && (!data || (!data.price && !data.previous_close))) {
-          const av = await avFetchQuote(SYM);
-          if (av && (av.price || av.previous_close)) data = av;
+    if (isTSX) {
+      // TSX stocks: Marketstack first (100 calls/month), Alpha Vantage fallback (25 calls/day)
+      if (USE_MS) {
+        try {
+          data = await msFetchQuote(SYM);
+          if (data && (data.price || data.previous_close)) {
+            console.log(`[API] Marketstack succeeded for TSX ${SYM}`);
+          } else {
+            data = null;
+          }
+        } catch (e) {
+          console.log(`[API] Marketstack failed for ${SYM}:`, e.message);
+          data = null;
         }
-      } catch (e) {
-        if (USE_AV) {
-          try { data = await avFetchQuote(SYM); } catch {}
-        }
-        if (!data) throw e;
       }
-    } else if (USE_AV) {
-      data = await avFetchQuote(SYM);
+
+      // Fallback to Alpha Vantage if Marketstack failed
+      if (!data && USE_AV) {
+        try {
+          data = await avFetchQuote(SYM);
+          if (data && (data.price || data.previous_close)) {
+            console.log(`[API] Alpha Vantage succeeded for TSX ${SYM}`);
+          } else {
+            data = null;
+          }
+        } catch (e) {
+          console.log(`[API] Alpha Vantage failed for ${SYM}:`, e.message);
+          data = null;
+        }
+      }
     } else {
-      const mock = await loadMock();
-      data = mock.quote(SYM);
+      // NYSE/NASDAQ stocks: Finnhub first, then Alpha Vantage
+      if (USE_FH) {
+        try {
+          data = await fhFetchQuote(SYM);
+          if (data && (data.price || data.previous_close)) {
+            console.log(`[API] Finnhub succeeded for ${SYM}`);
+          } else {
+            data = null;
+          }
+        } catch (e) {
+          console.log(`[API] Finnhub failed for ${SYM}:`, e.message);
+          data = null;
+        }
+      }
+
+      // Fallback to Alpha Vantage if Finnhub failed
+      if (!data && USE_AV) {
+        try {
+          data = await avFetchQuote(SYM);
+          if (data && (data.price || data.previous_close)) {
+            console.log(`[API] Alpha Vantage succeeded for ${SYM}`);
+          } else {
+            data = null;
+          }
+        } catch (e) {
+          console.log(`[API] Alpha Vantage failed for ${SYM}:`, e.message);
+          data = null;
+        }
+      }
+    }
+
+    // If all providers failed, throw error
+    if (!data) {
+      throw new Error(`All providers failed for ${SYM}`);
     }
 
     data = {
@@ -206,28 +347,76 @@ async function resolveSeries(sym, interval = "1day", output = 30) {
   const cached = readCache(mem.series, key);
   if (cached) return cached;
 
+  const isTSX = SYM.endsWith(".TO");
+
   try {
     let data = null;
 
-    if (USE_FH) {
-      try {
-        data = await fhFetchSeries(SYM, output);
-        const empty = !data || !Array.isArray(data.values) || data.values.length === 0;
-        if (USE_AV && empty) {
-          const av = await avFetchSeries(SYM, output);
-          if (av && Array.isArray(av.values) && av.values.length) data = av;
+    if (isTSX) {
+      // TSX stocks: Marketstack first (100 calls/month), Alpha Vantage fallback (25 calls/day)
+      if (USE_MS) {
+        try {
+          data = await msFetchSeries(SYM, output);
+          if (data && data.values && data.values.length > 0) {
+            console.log(`[API] Marketstack series succeeded for TSX ${SYM}`);
+          } else {
+            data = null;
+          }
+        } catch (e) {
+          console.log(`[API] Marketstack series failed for ${SYM}:`, e.message);
+          data = null;
         }
-      } catch (e) {
-        if (USE_AV) {
-          try { data = await avFetchSeries(SYM, output); } catch {}
-        }
-        if (!data) throw e;
       }
-    } else if (USE_AV) {
-      data = await avFetchSeries(SYM, output);
+
+      // Fallback to Alpha Vantage if Marketstack failed
+      if (!data && USE_AV) {
+        try {
+          data = await avFetchSeries(SYM, output);
+          if (data && data.values && data.values.length > 0) {
+            console.log(`[API] Alpha Vantage series succeeded for TSX ${SYM}`);
+          } else {
+            data = null;
+          }
+        } catch (e) {
+          console.log(`[API] Alpha Vantage series failed for ${SYM}:`, e.message);
+          data = null;
+        }
+      }
     } else {
-      const mock = await loadMock();
-      data = mock.series(SYM, output);
+      // NYSE/NASDAQ stocks: Finnhub first, then Alpha Vantage
+      if (USE_FH) {
+        try {
+          data = await fhFetchSeries(SYM, output);
+          if (data && data.values && data.values.length > 0) {
+            console.log(`[API] Finnhub series succeeded for ${SYM}`);
+          } else {
+            data = null;
+          }
+        } catch (e) {
+          console.log(`[API] Finnhub series failed for ${SYM}:`, e.message);
+          data = null;
+        }
+      }
+
+      // Fallback to Alpha Vantage if Finnhub failed
+      if (!data && USE_AV) {
+        try {
+          data = await avFetchSeries(SYM, output);
+          if (data && data.values && data.values.length > 0) {
+            console.log(`[API] Alpha Vantage series succeeded for ${SYM}`);
+          } else {
+            data = null;
+          }
+        } catch (e) {
+          console.log(`[API] Alpha Vantage series failed for ${SYM}:`, e.message);
+          data = null;
+        }
+      }
+    }
+
+    // If all providers failed, throw error
+    if (!data) {
+      throw new Error(`All providers failed for ${SYM}`);
     }
 
     const safe = {
