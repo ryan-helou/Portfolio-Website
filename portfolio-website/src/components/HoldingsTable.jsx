@@ -1,4 +1,6 @@
-﻿const currencyFormatter = new Intl.NumberFormat("en-US", {
+﻿import { useState } from "react";
+
+const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
   minimumFractionDigits: 2,
@@ -19,6 +21,110 @@ export default function HoldingsTable({
   selectedSymbol,
   errorActive,
 }) {
+  const [sortColumn, setSortColumn] = useState(null);
+  const [sortDirection, setSortDirection] = useState("asc");
+
+  const handleHeaderClick = (column) => {
+    if (sortColumn === column) {
+      // Cycle through: asc -> desc -> unsorted
+      if (sortDirection === "asc") {
+        setSortDirection("desc");
+      } else {
+        // Third click: reset to unsorted
+        setSortColumn(null);
+        setSortDirection("asc");
+      }
+    } else {
+      // Switch to new column with default direction
+      setSortColumn(column);
+      setSortDirection(column === "symbol" ? "asc" : "desc");
+    }
+  };
+
+  const getSortedHoldings = () => {
+    // If no sort column selected, return original order
+    if (!sortColumn) {
+      return holdings;
+    }
+
+    const sorted = [...holdings].sort((a, b) => {
+      const symA = normalizeSymbol(a.symbol);
+      const symB = normalizeSymbol(b.symbol);
+
+      let compareValue = 0;
+
+      switch (sortColumn) {
+        case "symbol":
+          compareValue = symA.localeCompare(symB);
+          break;
+
+        case "shares":
+          compareValue = Number(a.shares) - Number(b.shares);
+          break;
+
+        case "price": {
+          const priceA = typeof prices?.[symA] === "object"
+            ? Number(prices[symA]?.price ?? 0)
+            : Number(prices?.[symA] ?? 0);
+          const priceB = typeof prices?.[symB] === "object"
+            ? Number(prices[symB]?.price ?? 0)
+            : Number(prices?.[symB] ?? 0);
+          compareValue = priceA - priceB;
+          break;
+        }
+
+        case "change": {
+          const getChange = (sym) => {
+            const rawEntry = prices?.[sym];
+            let priceNumber = 0;
+            let prevClose = null;
+            let changePercent = null;
+
+            if (typeof rawEntry === "object" && rawEntry !== null) {
+              priceNumber = Number(rawEntry.price ?? 0);
+              prevClose = Number(rawEntry.prevClose ?? NaN);
+              changePercent = rawEntry.changePercent ?? null;
+            } else {
+              priceNumber = Number(rawEntry ?? 0);
+              prevClose = Number(prices?.[`${sym}-prevClose`] ?? NaN);
+            }
+
+            if (changePercent !== null && Number.isFinite(changePercent)) {
+              return changePercent;
+            }
+            if (prevClose && Number.isFinite(prevClose)) {
+              return ((priceNumber - prevClose) / prevClose) * 100;
+            }
+            return 0;
+          };
+
+          compareValue = getChange(symA) - getChange(symB);
+          break;
+        }
+
+        case "value": {
+          const priceA = typeof prices?.[symA] === "object"
+            ? Number(prices[symA]?.price ?? 0)
+            : Number(prices?.[symA] ?? 0);
+          const priceB = typeof prices?.[symB] === "object"
+            ? Number(prices[symB]?.price ?? 0)
+            : Number(prices?.[symB] ?? 0);
+          const valueA = priceA * Number(a.shares);
+          const valueB = priceB * Number(b.shares);
+          compareValue = valueA - valueB;
+          break;
+        }
+
+        default:
+          compareValue = 0;
+      }
+
+      return sortDirection === "asc" ? compareValue : -compareValue;
+    });
+
+    return sorted;
+  };
+
   if (!holdings.length) {
     return (
       <div className="empty" role="status">
@@ -131,22 +237,64 @@ export default function HoldingsTable({
     );
   }
 
+  const sortedHoldings = getSortedHoldings();
+
+  const renderSortIndicator = (column) => {
+    if (sortColumn !== column) return null;
+    return sortDirection === "asc" ? " ↑" : " ↓";
+  };
+
   return (
     <div className="table-wrapper fade-in">
       <table className="table" aria-label="Holdings table">
         <thead>
           <tr>
-            <th scope="col">Symbol</th>
-            <th scope="col">Shares</th>
-            <th scope="col">Price</th>
-            <th scope="col">Today's Change</th>
-            <th scope="col">Value</th>
+            <th
+              scope="col"
+              onClick={() => handleHeaderClick("symbol")}
+              style={{ cursor: "pointer", userSelect: "none" }}
+              title="Click to sort by Symbol"
+            >
+              Symbol{renderSortIndicator("symbol")}
+            </th>
+            <th
+              scope="col"
+              onClick={() => handleHeaderClick("shares")}
+              style={{ cursor: "pointer", userSelect: "none" }}
+              title="Click to sort by Shares"
+            >
+              Shares{renderSortIndicator("shares")}
+            </th>
+            <th
+              scope="col"
+              onClick={() => handleHeaderClick("price")}
+              style={{ cursor: "pointer", userSelect: "none" }}
+              title="Click to sort by Price"
+            >
+              Price{renderSortIndicator("price")}
+            </th>
+            <th
+              scope="col"
+              onClick={() => handleHeaderClick("change")}
+              style={{ cursor: "pointer", userSelect: "none" }}
+              title="Click to sort by Today's Change"
+            >
+              Today's Change{renderSortIndicator("change")}
+            </th>
+            <th
+              scope="col"
+              onClick={() => handleHeaderClick("value")}
+              style={{ cursor: "pointer", userSelect: "none" }}
+              title="Click to sort by Value"
+            >
+              Value{renderSortIndicator("value")}
+            </th>
             <th scope="col">
               <span className="sr-only">Remove holding</span>
             </th>
           </tr>
         </thead>
-        <tbody>{holdings.map(renderRow)}</tbody>
+        <tbody>{sortedHoldings.map(renderRow)}</tbody>
       </table>
     </div>
   );
