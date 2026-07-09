@@ -1,6 +1,8 @@
-# Portfolio Tracker
+# 📈 Portfolio Tracker
 
 *A React web app for tracking a stock portfolio in real time — add holdings, watch the day's gain or loss, and save the whole thing behind a shareable key.*
+
+![React](https://img.shields.io/badge/React-61DAFB?style=flat-square&logo=react&logoColor=black) ![Vite](https://img.shields.io/badge/Vite-646CFF?style=flat-square&logo=vite&logoColor=white) ![Supabase](https://img.shields.io/badge/Supabase-3FCF8E?style=flat-square&logo=supabase&logoColor=white) ![Vercel](https://img.shields.io/badge/Vercel-000000?style=flat-square&logo=vercel&logoColor=white)
 
 Enter a ticker and a share count and the app pulls a live quote, tallies your total portfolio value, and shows how much you're up or down on the day. It handles both US listings and the Toronto Stock Exchange: a symbol ending in `.TO` gets routed to a different data provider than an ordinary NYSE or NASDAQ ticker.
 
