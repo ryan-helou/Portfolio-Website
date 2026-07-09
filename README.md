@@ -1,41 +1,17 @@
-🌐 PORTFOLIO WEBSITE
-====================
+# Portfolio Tracker
 
-A personal portfolio website showcasing my projects, skills, and experience as a software developer.  
-🔗 Live site: https://portfolio-website-virid-phi-86.vercel.app/
+*A React web app for tracking a stock portfolio in real time — add holdings, watch the day's gain or loss, and save the whole thing behind a shareable key.*
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Enter a ticker and a share count and the app pulls a live quote, tallies your total portfolio value, and shows how much you're up or down on the day. It handles both US listings and the Toronto Stock Exchange: a symbol ending in `.TO` gets routed to a different data provider than an ordinary NYSE or NASDAQ ticker.
 
-🚀 FEATURES
-===========
-✔️ Responsive and modern design  
-✔️ Project showcase section  
-✔️ About and contact sections  
-✔️ Smooth scrolling and animations  
+Quotes come from three free APIs, picked per symbol to stay inside each one's rate limit:
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Finnhub (60 calls/min) for NYSE and NASDAQ
+- Marketstack (100 calls/month) for `.TO` stocks on the TSX
+- Alpha Vantage (25 calls/day) as the fallback when either of those fails
 
-🛠️ BUILT WITH
-==============
-🧩 React (Vite)  
-🎨 HTML5 & CSS3  
-💻 JavaScript (ES6+)  
-☁️ Vercel for deployment  
+To keep from burning through those quotas, every quote is cached in memory and in `localStorage` for 24 hours, and manual refreshes are throttled to about one every 1.5 seconds. With no API keys set at all, the app falls back to built-in mock data so it still runs.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Portfolios persist two ways. Your holdings and theme choice live in `localStorage`, so a reload keeps your list intact. You can also push the whole portfolio to a Supabase table under a short alphanumeric key of 3–20 characters — no account, no password. Anyone who enters that same key on any device loads the same holdings, which makes a portfolio easy to share but also means the key is the only thing guarding it.
 
-💻 GETTING STARTED
-==================
-To run locally:
-
-```
-git clone https://github.com/ryan-helou/portfolio-website.git
-cd portfolio-website
-npm install
-npm run dev
-```
-
-Then open http://localhost:5173 in your browser.
-
----
-Built by Ryan Helou
+Built with React 19 and Vite, entirely client-side, and deployed on Vercel.
